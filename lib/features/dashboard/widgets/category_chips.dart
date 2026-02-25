@@ -67,14 +67,20 @@ class _CategoryChipsState extends State<CategoryChips> {
     final cs = Theme.of(context).colorScheme;
     final money = NumberFormat.currency(
       locale: 'en_IN',
-      symbol: '₹',
+      symbol: 'Rs ',
       decimalDigits: 0,
     );
 
     final total = _cats.fold<double>(0, (sum, e) => sum + e.total);
-
-    // Limit sections for clarity
     final show = _cats.take(5).toList();
+
+    final colors = [
+      cs.primary,
+      cs.secondary,
+      cs.tertiary,
+      cs.primaryContainer,
+      cs.secondaryContainer,
+    ];
 
     List<PieChartSectionData> sections() {
       if (total <= 0) {
@@ -93,22 +99,13 @@ class _CategoryChipsState extends State<CategoryChips> {
         ];
       }
 
-      // Give each slice a nice themed color variation (based on primary/secondary/tertiary)
-      final colors = [
-        cs.primary,
-        cs.secondary,
-        cs.tertiary,
-        cs.primaryContainer,
-        cs.secondaryContainer,
-      ];
-
       return List.generate(show.length, (i) {
-        final v = show[i].total;
-        final pct = (v / total) * 100;
+        final value = show[i].total;
+        final pct = (value / total) * 100;
         return PieChartSectionData(
-          value: v <= 0 ? 0.01 : v,
+          value: value <= 0 ? 0.01 : value,
           title: pct >= 12 ? '${pct.toStringAsFixed(0)}%' : '',
-          radius: 52,
+          radius: 54,
           color: colors[i % colors.length],
           titleStyle: TextStyle(
             color: cs.onPrimary,
@@ -142,11 +139,17 @@ class _CategoryChipsState extends State<CategoryChips> {
             ],
           ),
           const SizedBox(height: 12),
-
           Container(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(18),
-              color: cs.surfaceContainerHighest.withValues(alpha: 0.25),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  cs.surfaceContainerHighest.withValues(alpha: 0.30),
+                  cs.surface.withValues(alpha: 0.22),
+                ],
+              ),
               border: Border.all(
                 color: cs.outlineVariant.withValues(alpha: 0.30),
               ),
@@ -154,7 +157,7 @@ class _CategoryChipsState extends State<CategoryChips> {
             padding: const EdgeInsets.all(12),
             child: _loading
                 ? const SizedBox(
-                    height: 140,
+                    height: 150,
                     child: Center(
                       child: CircularProgressIndicator(strokeWidth: 2),
                     ),
@@ -167,8 +170,8 @@ class _CategoryChipsState extends State<CategoryChips> {
                         child: PieChart(
                           PieChartData(
                             sections: sections(),
-                            centerSpaceRadius: 34,
-                            sectionsSpace: 2,
+                            centerSpaceRadius: 32,
+                            sectionsSpace: 3,
                           ),
                         ),
                       ),
@@ -178,9 +181,7 @@ class _CategoryChipsState extends State<CategoryChips> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              total <= 0
-                                  ? 'No spending yet'
-                                  : money.format(total),
+                              total <= 0 ? 'No spending yet' : money.format(total),
                               style: TextStyle(
                                 fontSize: 18,
                                 fontWeight: FontWeight.w900,
@@ -196,17 +197,30 @@ class _CategoryChipsState extends State<CategoryChips> {
                               ),
                             ),
                             const SizedBox(height: 10),
-                            ...show.map((c) {
-                              final pct = total <= 0
-                                  ? 0
-                                  : (c.total / total) * 100;
+                            ...show.asMap().entries.map((entry) {
+                              final i = entry.key;
+                              final cat = entry.value;
+                              final pct = total <= 0 ? 0 : (cat.total / total) * 100;
+                              final color = colors[i % colors.length];
+
                               return Padding(
                                 padding: const EdgeInsets.only(bottom: 8),
                                 child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
+                                    Container(
+                                      width: 8,
+                                      height: 8,
+                                      margin: const EdgeInsets.only(top: 5),
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: color,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
                                     Expanded(
                                       child: Text(
-                                        c.category,
+                                        cat.category,
                                         style: TextStyle(
                                           fontWeight: FontWeight.w800,
                                           color: cs.onSurface,
@@ -214,7 +228,7 @@ class _CategoryChipsState extends State<CategoryChips> {
                                       ),
                                     ),
                                     Text(
-                                      '${money.format(c.total)}  •  ${pct.toStringAsFixed(0)}%',
+                                      '${money.format(cat.total)} | ${pct.toStringAsFixed(0)}%',
                                       style: TextStyle(
                                         color: cs.onSurfaceVariant,
                                         fontWeight: FontWeight.w700,
@@ -230,41 +244,44 @@ class _CategoryChipsState extends State<CategoryChips> {
                     ],
                   ),
           ),
-
           const SizedBox(height: 12),
-
-          // Chips (top categories)
           if (!_loading)
             Wrap(
               spacing: 10,
               runSpacing: 10,
-              children:
-                  (show.isEmpty
-                          ? ExpenseOptions.categories
-                          : show.map((e) => e.category))
-                      .map((name) {
-                        return Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 10,
-                          ),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(999),
-                            color: cs.primary.withValues(alpha: 0.12),
-                            border: Border.all(
-                              color: cs.primary.withValues(alpha: 0.24),
-                            ),
-                          ),
-                          child: Text(
-                            name,
-                            style: TextStyle(
-                              fontWeight: FontWeight.w800,
-                              color: cs.primary,
-                            ),
-                          ),
-                        );
-                      })
-                      .toList(),
+              children: (show.isEmpty
+                      ? ExpenseOptions.categories
+                      : show.map((e) => e.category))
+                  .map((name) {
+                    return Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(999),
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            cs.primary.withValues(alpha: 0.16),
+                            cs.tertiary.withValues(alpha: 0.12),
+                          ],
+                        ),
+                        border: Border.all(
+                          color: cs.primary.withValues(alpha: 0.24),
+                        ),
+                      ),
+                      child: Text(
+                        name,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          color: cs.primary,
+                        ),
+                      ),
+                    );
+                  })
+                  .toList(),
             ),
         ],
       ),

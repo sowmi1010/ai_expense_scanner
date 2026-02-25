@@ -456,7 +456,7 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
                   ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
-                    value: paymentMode,
+                    initialValue: paymentMode,
                     decoration: const InputDecoration(labelText: 'Payment mode'),
                     items: ExpenseOptions.paymentModes
                         .map(

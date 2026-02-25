@@ -1,3 +1,5 @@
+import java.io.File
+
 allprojects {
     repositories {
         google()
@@ -5,15 +7,17 @@ allprojects {
     }
 }
 
-val newBuildDir: Directory =
-    rootProject.layout.buildDirectory
-        .dir("../../build")
-        .get()
-rootProject.layout.buildDirectory.value(newBuildDir)
+// Keep Android build outputs on the same drive as pub cache (usually C:) to
+// avoid Gradle path-relativize failures on Windows when project is on another drive.
+val localAppData =
+    System.getenv("LOCALAPPDATA")
+        ?: "${System.getProperty("user.home")}\\AppData\\Local"
+val newBuildDir = File(localAppData, "ai_expense_scanner\\build")
+rootProject.layout.buildDirectory.set(newBuildDir)
 
 subprojects {
-    val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
-    project.layout.buildDirectory.value(newSubprojectBuildDir)
+    val newSubprojectBuildDir = File(newBuildDir, project.name)
+    project.layout.buildDirectory.set(newSubprojectBuildDir)
 }
 subprojects {
     project.evaluationDependsOn(":app")

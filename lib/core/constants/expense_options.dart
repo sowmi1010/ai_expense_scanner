@@ -3,10 +3,14 @@ class ExpenseOptions {
   static const String defaultPaymentMode = 'Cash';
 
   static const List<String> categories = [
-    'Food',
-    'Groceries',
-    'Travel',
-    'Shopping',
+    'Outside Food',
+    'Vegetables',
+    'Fruits',
+    'Snacks',
+    'Non Veg',
+    'Petrol',
+    'Movies',
+    'Shopping Dress',
     'Bills',
     'Recharge',
     'Savings',
@@ -29,12 +33,134 @@ class ExpenseOptions {
 
     bool hasAny(List<String> keys) => keys.any(t.contains);
 
+    // Keep Movies before food checks so it is never classified as Food.
+    if (hasAny([
+      'movie',
+      'movies',
+      'cinema',
+      'theatre',
+      'theater',
+      'ticket',
+      'bookmyshow',
+      'pvr',
+      'inox',
+      'screen',
+      'showtime',
+    ])) {
+      return 'Movies';
+    }
+
+    if (hasAny([
+      'petrol',
+      'fuel',
+      'diesel',
+      'gasoline',
+      'petrol bunk',
+      'fuel station',
+      'petrol pump',
+      'hp petrol',
+      'indian oil',
+      'shell',
+      'bharat petroleum',
+      'bpcl',
+      'ioc',
+    ])) {
+      return 'Petrol';
+    }
+
+    if (hasAny([
+      'dress',
+      'clothes',
+      'clothing',
+      'apparel',
+      'garment',
+      'boutique',
+      'fashion',
+      'myntra',
+      'ajio',
+      'shirt',
+      'jeans',
+      'saree',
+      'kurti',
+      'footwear',
+      'shoe',
+      'shopping dress',
+    ])) {
+      return 'Shopping Dress';
+    }
+
+    if (hasAny([
+      'vegetable',
+      'vegetables',
+      'veggies',
+      'greens',
+      'onion',
+      'tomato',
+      'potato',
+      'carrot',
+      'spinach',
+      'cabbage',
+      'brinjal',
+      'bhindi',
+      'drumstick',
+    ])) {
+      return 'Vegetables';
+    }
+
+    if (hasAny([
+      'fruit',
+      'fruits',
+      'apple',
+      'banana',
+      'orange',
+      'grape',
+      'mango',
+      'watermelon',
+      'pomegranate',
+      'papaya',
+      'guava',
+    ])) {
+      return 'Fruits';
+    }
+
+    if (hasAny([
+      'snack',
+      'snacks',
+      'chips',
+      'biscuit',
+      'cookies',
+      'namkeen',
+      'mixture',
+      'puffs',
+      'samosa',
+      'fries',
+      'popcorn',
+    ])) {
+      return 'Snacks';
+    }
+
+    if (hasAny([
+      'non veg',
+      'non-veg',
+      'chicken',
+      'mutton',
+      'fish',
+      'seafood',
+      'egg',
+      'kebab',
+      'tandoori',
+      'grill',
+      'biryani',
+    ])) {
+      return 'Non Veg';
+    }
+
     if (hasAny([
       'restaurant',
       'cafe',
       'hotel',
-      'biryani',
       'dosa',
+      'idli',
       'meals',
       'swiggy',
       'zomato',
@@ -42,57 +168,13 @@ class ExpenseOptions {
       'coffee',
       'pizza',
       'burger',
+      'outside food',
+      'dine in',
+      'dining',
+      'eatery',
+      'food court',
     ])) {
-      return 'Food';
-    }
-
-    if (hasAny([
-      'grocery',
-      'groceries',
-      'mart',
-      'supermarket',
-      'bigbasket',
-      'vegetable',
-      'milk',
-      'provision',
-      'dmart',
-    ])) {
-      return 'Groceries';
-    }
-
-    if (hasAny([
-      'uber',
-      'ola',
-      'petrol',
-      'fuel',
-      'diesel',
-      'metro',
-      'bus',
-      'train',
-      'parking',
-      'toll',
-      'auto',
-      'taxi',
-    ])) {
-      return 'Travel';
-    }
-
-    if (hasAny([
-      'store',
-      'shopping',
-      'fashion',
-      'cloth',
-      'mall',
-      'amazon',
-      'flipkart',
-      'myntra',
-      'jeweller',
-      'jewellery',
-      'jewelry',
-      'gold',
-      'silver',
-    ])) {
-      return 'Shopping';
+      return 'Outside Food';
     }
 
     if (hasAny([

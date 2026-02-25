@@ -31,7 +31,6 @@ AI Expense Scanner is a Flutter app for tracking personal expenses with receipt 
 - `flutter_local_notifications` for budget notifications
 - `share_plus` for export/backup sharing
 
-
 ## screen shot
 
 ![WhatsApp Image 2026-02-21 at 10 26 47 AM](https://github.com/user-attachments/assets/496b5b0c-60a6-406a-8aee-521e933749c6)
@@ -45,8 +44,6 @@ AI Expense Scanner is a Flutter app for tracking personal expenses with receipt 
 ![WhatsApp Image 2026-02-21 at 10 26 48 AM](https://github.com/user-attachments/assets/1bce1700-2e37-4501-adcb-51d6a264214b)
 
 ![WhatsApp Image 2026-02-21 at 10 26 48 AM (1)](https://github.com/user-attachments/assets/ca050e4c-ee21-432f-a6a6-1fa5abb3295e)
-
-
 ## Project Structure
 
 ```text

@@ -1,6 +1,9 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import '../../core/ui/app_spacing.dart';
 import '../dashboard/dashboard_screen.dart';
+import '../monthly/monthly_overview_screen.dart';
 import '../scan/scan_landing_screen.dart';
 
 class ShellScreen extends StatefulWidget {
@@ -10,22 +13,41 @@ class ShellScreen extends StatefulWidget {
   State<ShellScreen> createState() => _ShellScreenState();
 }
 
-class _ShellScreenState extends State<ShellScreen>
-    with TickerProviderStateMixin {
+class _ShellScreenState extends State<ShellScreen> {
   int index = 0;
 
-  final pages = const [DashboardScreen(), ScanLandingScreen()];
+  static const _items = [
+    _NavItemData(label: 'Home', icon: Icons.grid_view_rounded),
+    _NavItemData(label: 'Scan', icon: Icons.document_scanner_rounded),
+    _NavItemData(label: 'Monthly', icon: Icons.calendar_month_rounded),
+  ];
+
+  final pages = const [
+    DashboardScreen(),
+    ScanLandingScreen(),
+    MonthlyOverviewScreen(),
+  ];
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
-      body: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 220),
-        switchInCurve: Curves.easeOutCubic,
-        switchOutCurve: Curves.easeInCubic,
-        child: pages[index],
+      extendBody: true,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          const _ShellBackdrop(),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 260),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            child: KeyedSubtree(
+              key: ValueKey(index),
+              child: pages[index],
+            ),
+          ),
+        ],
       ),
       bottomNavigationBar: SafeArea(
         top: false,
@@ -36,37 +58,62 @@ class _ShellScreenState extends State<ShellScreen>
             AppSpacing.md,
             AppSpacing.md,
           ),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(24),
-              color: cs.surfaceContainerHighest.withValues(alpha: 0.70),
-              border: Border.all(
-                color: cs.outlineVariant.withValues(alpha: 0.35),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(30),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(30),
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      cs.surface.withValues(alpha: 0.85),
+                      cs.surfaceContainerHighest.withValues(alpha: 0.72),
+                    ],
+                  ),
+                  border: Border.all(
+                    color: cs.outlineVariant.withValues(alpha: 0.35),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      blurRadius: 24,
+                      offset: const Offset(0, 10),
+                      spreadRadius: -10,
+                      color: cs.primary.withValues(alpha: 0.22),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: List.generate(_items.length, (i) {
+                    final item = _items[i];
+                    return Padding(
+                      padding: EdgeInsets.only(right: i == _items.length - 1 ? 0 : 8),
+                      child: _NavItem(
+                        label: item.label,
+                        icon: item.icon,
+                        selected: index == i,
+                        onTap: () => setState(() => index = i),
+                      ),
+                    );
+                  }),
+                ),
               ),
-            ),
-            child: Row(
-              children: [
-                _NavItem(
-                  label: 'Home',
-                  icon: Icons.grid_view_rounded,
-                  selected: index == 0,
-                  onTap: () => setState(() => index = 0),
-                ),
-                const SizedBox(width: 10),
-                _NavItem(
-                  label: 'Scan',
-                  icon: Icons.document_scanner_rounded,
-                  selected: index == 1,
-                  onTap: () => setState(() => index = 1),
-                ),
-              ],
             ),
           ),
         ),
       ),
     );
   }
+}
+
+class _NavItemData {
+  final String label;
+  final IconData icon;
+
+  const _NavItemData({required this.label, required this.icon});
 }
 
 class _NavItem extends StatelessWidget {
@@ -87,44 +134,140 @@ class _NavItem extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
 
     return Expanded(
-      child: InkWell(
-        borderRadius: BorderRadius.circular(20),
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOutCubic,
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 240),
+        curve: Curves.easeOutCubic,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          gradient: selected
+              ? LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    cs.primary.withValues(alpha: 0.28),
+                    cs.tertiary.withValues(alpha: 0.20),
+                  ],
+                )
+              : null,
+          border: Border.all(
             color: selected
-                ? cs.primary.withValues(alpha: 0.18)
+                ? cs.primary.withValues(alpha: 0.45)
                 : Colors.transparent,
-            border: Border.all(
-              color: selected
-                  ? cs.primary.withValues(alpha: 0.35)
-                  : Colors.transparent,
-            ),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                icon,
-                size: 20,
-                color: selected ? cs.primary : cs.onSurfaceVariant,
-              ),
-              const SizedBox(width: 8),
-              AnimatedDefaultTextStyle(
-                duration: const Duration(milliseconds: 220),
-                style: TextStyle(
-                  fontWeight: FontWeight.w800,
-                  color: selected ? cs.primary : cs.onSurfaceVariant,
-                ),
-                child: Text(label),
-              ),
-            ],
           ),
         ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  icon,
+                  size: 20,
+                  color: selected ? cs.primary : cs.onSurfaceVariant,
+                ),
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 220),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  child: selected
+                      ? Padding(
+                          key: const ValueKey('label'),
+                          padding: const EdgeInsets.only(left: 8),
+                          child: Text(
+                            label,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              color: cs.primary,
+                            ),
+                          ),
+                        )
+                      : const SizedBox.shrink(key: ValueKey('empty')),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ShellBackdrop extends StatelessWidget {
+  const _ShellBackdrop();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return IgnorePointer(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  cs.surface.withValues(alpha: 0.94),
+                  cs.surfaceContainerHighest.withValues(alpha: 0.72),
+                ],
+              ),
+            ),
+          ),
+          Positioned(
+            top: -95,
+            right: -72,
+            child: _Orb(
+              size: 240,
+              color: cs.primary.withValues(alpha: 0.16),
+            ),
+          ),
+          Positioned(
+            top: 140,
+            left: -70,
+            child: _Orb(
+              size: 190,
+              color: cs.tertiary.withValues(alpha: 0.12),
+            ),
+          ),
+          Positioned(
+            bottom: 110,
+            right: -30,
+            child: _Orb(
+              size: 150,
+              color: cs.secondary.withValues(alpha: 0.14),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Orb extends StatelessWidget {
+  final double size;
+  final Color color;
+
+  const _Orb({required this.size, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: color,
+        boxShadow: [
+          BoxShadow(
+            color: color,
+            blurRadius: 90,
+            spreadRadius: 16,
+          ),
+        ],
       ),
     );
   }

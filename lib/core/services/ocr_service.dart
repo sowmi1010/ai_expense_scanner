@@ -195,6 +195,7 @@ class OcrService {
     for (final line in lines) {
       candidates.addAll(_extractCandidatesFromLine(line));
     }
+    candidates.addAll(_extractDerivedTotalCandidates(lines));
 
     if (candidates.isEmpty) return null;
 
@@ -221,6 +222,75 @@ class OcrService {
 
     candidates.sort((a, b) => b.value.compareTo(a.value));
     return candidates.first.value;
+  }
+
+  List<_AmountCandidate> _extractDerivedTotalCandidates(List<String> lines) {
+    double? baseAmount;
+    double? explicitNetTotal;
+    final taxAmounts = <double>[];
+
+    for (final line in lines) {
+      final lower = line.toLowerCase();
+      final amount = _extractBestAmountFromLine(line);
+      if (amount == null) continue;
+
+      if (RegExp(
+        r'(grand\s*total|net\s*total|total\s*payable|amount\s*due|net\s*amount)',
+        caseSensitive: false,
+      ).hasMatch(lower)) {
+        explicitNetTotal = explicitNetTotal == null
+            ? amount
+            : (amount > explicitNetTotal ? amount : explicitNetTotal);
+        continue;
+      }
+
+      if (RegExp(
+        r'(base\s*rate|taxable\s*value|subtotal|sub\s*total|base\s*amount)',
+        caseSensitive: false,
+      ).hasMatch(lower)) {
+        baseAmount = baseAmount == null
+            ? amount
+            : (amount > baseAmount ? amount : baseAmount);
+        continue;
+      }
+
+      if (RegExp(
+        r'(cgst|sgst|igst|tax|cess)',
+        caseSensitive: false,
+      ).hasMatch(lower)) {
+        taxAmounts.add(amount);
+      }
+    }
+
+    final out = <_AmountCandidate>[];
+
+    if (explicitNetTotal != null) {
+      out.add(
+        _AmountCandidate(
+          value: explicitNetTotal,
+          line: 'derived: explicit net total',
+          hasCurrency: true,
+          score: 14,
+        ),
+      );
+    }
+
+    if (baseAmount != null && taxAmounts.isNotEmpty) {
+      final taxTotal = taxAmounts.fold<double>(0, (sum, e) => sum + e);
+      final derived = baseAmount + taxTotal;
+      if (derived > 1 && derived <= 5000000 && derived > baseAmount) {
+        out.add(
+          _AmountCandidate(
+            value: derived,
+            line: 'derived: base + tax',
+            hasCurrency: true,
+            score: 10 + (taxAmounts.length >= 2 ? 2 : 0),
+          ),
+        );
+      }
+    }
+
+    return out;
   }
 
   List<_AmountCandidate> _extractCandidatesFromLine(String line) {
@@ -270,10 +340,54 @@ class OcrService {
   }
 
   double? _parseAmountToken(String token) {
-    final cleaned = token.replaceAll(',', '').trim();
+    final raw = token.trim();
+
+    String cleaned;
+    if (raw.contains(',') && !raw.contains('.')) {
+      // OCR sometimes reads decimal separator as comma (e.g. 210,04).
+      if (RegExp(r'^\d+,\d{1,2}$').hasMatch(raw)) {
+        cleaned = raw.replaceAll(',', '.');
+      } else {
+        cleaned = raw.replaceAll(',', '');
+      }
+    } else {
+      cleaned = raw.replaceAll(',', '');
+    }
+
     final value = double.tryParse(cleaned);
     if (value == null || value <= 0) return null;
     return value;
+  }
+
+  double? _extractBestAmountFromLine(String line) {
+    final currencyValues = <double>[];
+    for (final m in _currencyAmountRegex.allMatches(line)) {
+      final token = m.group(1);
+      if (token == null) continue;
+      final value = _parseAmountToken(token);
+      if (value == null) continue;
+      currencyValues.add(value);
+    }
+
+    if (currencyValues.isNotEmpty) {
+      return currencyValues.last;
+    }
+
+    final plainValues = <double>[];
+    for (final m in _plainAmountRegex.allMatches(line)) {
+      final token = m.group(1);
+      if (token == null) continue;
+
+      // Skip percentages like 2.5% from tax labels.
+      final nextChar = m.end < line.length ? line[m.end] : '';
+      if (nextChar == '%') continue;
+
+      final value = _parseAmountToken(token);
+      if (value == null) continue;
+      plainValues.add(value);
+    }
+
+    return plainValues.isNotEmpty ? plainValues.last : null;
   }
 
   int _scoreAmountCandidate(String line, double value, {required bool hasCurrency}) {

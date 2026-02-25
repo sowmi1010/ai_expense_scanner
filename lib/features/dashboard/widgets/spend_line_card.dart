@@ -53,20 +53,25 @@ class _SpendLineCardState extends State<SpendLineCard> {
     final cs = Theme.of(context).colorScheme;
     final money = NumberFormat.currency(
       locale: 'en_IN',
-      symbol: '₹',
+      symbol: 'Rs ',
       decimalDigits: 0,
     );
 
     final maxY = _points.isEmpty
         ? 0.0
         : _points.map((e) => e.total).reduce((a, b) => a > b ? a : b);
+    final safeMaxY = maxY <= 0 ? 100.0 : maxY * 1.2;
 
-    final safeMaxY = (maxY <= 0) ? 100.0 : (maxY * 1.2);
+    final chartCount = _points.isEmpty ? 7 : _points.length;
+    final maxX = (chartCount - 1).toDouble();
 
     final spots = <FlSpot>[];
     for (int i = 0; i < _points.length; i++) {
       spots.add(FlSpot(i.toDouble(), _points[i].total));
     }
+
+    final totalSpend = _points.fold<double>(0, (sum, e) => sum + e.total);
+    final avgSpend = _points.isEmpty ? 0 : totalSpend / _points.length;
 
     return Glass(
       child: Column(
@@ -82,7 +87,7 @@ class _SpendLineCardState extends State<SpendLineCard> {
               ),
               const Spacer(),
               Text(
-                'Last 7 days',
+                _points.isEmpty ? 'No data yet' : 'Avg ${money.format(avgSpend)}',
                 style: TextStyle(
                   color: cs.onSurfaceVariant,
                   fontWeight: FontWeight.w700,
@@ -91,12 +96,18 @@ class _SpendLineCardState extends State<SpendLineCard> {
             ],
           ),
           const SizedBox(height: 12),
-
           Container(
-            height: 170,
+            height: 182,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(18),
-              color: cs.surfaceContainerHighest.withValues(alpha: 0.25),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  cs.surfaceContainerHighest.withValues(alpha: 0.30),
+                  cs.surface.withValues(alpha: 0.22),
+                ],
+              ),
               border: Border.all(
                 color: cs.outlineVariant.withValues(alpha: 0.30),
               ),
@@ -107,7 +118,7 @@ class _SpendLineCardState extends State<SpendLineCard> {
                 : LineChart(
                     LineChartData(
                       minX: 0,
-                      maxX: 6,
+                      maxX: maxX,
                       minY: 0,
                       maxY: safeMaxY,
                       gridData: FlGridData(
@@ -130,7 +141,7 @@ class _SpendLineCardState extends State<SpendLineCard> {
                         leftTitles: AxisTitles(
                           sideTitles: SideTitles(
                             showTitles: true,
-                            reservedSize: 48,
+                            reservedSize: 52,
                             interval: safeMaxY / 4,
                             getTitlesWidget: (value, meta) {
                               return Padding(
@@ -156,10 +167,7 @@ class _SpendLineCardState extends State<SpendLineCard> {
                               if (i < 0 || i >= _points.length) {
                                 return const SizedBox.shrink();
                               }
-                              final d = _points[i].day;
-                              final label = DateFormat(
-                                'E',
-                              ).format(d); // Mon/Tue
+                              final label = DateFormat('E').format(_points[i].day);
                               return Padding(
                                 padding: const EdgeInsets.only(top: 8),
                                 child: Text(
@@ -180,15 +188,13 @@ class _SpendLineCardState extends State<SpendLineCard> {
                         touchTooltipData: LineTouchTooltipData(
                           tooltipRoundedRadius: 12,
                           getTooltipItems: (touchedSpots) {
-                            return touchedSpots.map((s) {
-                              final idx = s.x.toInt();
+                            return touchedSpots.map((spot) {
+                              final idx = spot.x.toInt();
                               final day = (idx >= 0 && idx < _points.length)
-                                  ? DateFormat(
-                                      'dd MMM',
-                                    ).format(_points[idx].day)
+                                  ? DateFormat('dd MMM').format(_points[idx].day)
                                   : '';
                               return LineTooltipItem(
-                                '$day\n${money.format(s.y)}',
+                                '$day\n${money.format(spot.y)}',
                                 TextStyle(
                                   color: cs.onSurface,
                                   fontWeight: FontWeight.w800,
@@ -202,20 +208,28 @@ class _SpendLineCardState extends State<SpendLineCard> {
                         LineChartBarData(
                           isCurved: true,
                           barWidth: 3,
-                          color: cs.primary,
+                          gradient: LinearGradient(
+                            colors: [cs.primary, cs.tertiary],
+                          ),
                           belowBarData: BarAreaData(
                             show: true,
-                            color: cs.primary.withValues(alpha: 0.12),
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                cs.primary.withValues(alpha: 0.24),
+                                cs.primary.withValues(alpha: 0.04),
+                              ],
+                            ),
                           ),
                           dotData: FlDotData(
                             show: true,
-                            getDotPainter: (_, _, _, _) =>
-                                FlDotCirclePainter(
-                                  radius: 3.5,
-                                  color: cs.primary,
-                                  strokeWidth: 2,
-                                  strokeColor: cs.surface,
-                                ),
+                            getDotPainter: (_, _, _, _) => FlDotCirclePainter(
+                              radius: 3.5,
+                              color: cs.primary,
+                              strokeWidth: 2,
+                              strokeColor: cs.surface,
+                            ),
                           ),
                           spots: spots.isEmpty ? [const FlSpot(0, 0)] : spots,
                         ),

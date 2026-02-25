@@ -30,6 +30,32 @@ class ExpenseRepository {
     return id;
   }
 
+  Future<int> updateExpense(ExpenseModel expense) async {
+    if (expense.id == null) return 0;
+
+    final db = await AppDatabase.instance.database;
+    final updated = await db.update(
+      'expenses',
+      expense.toMap(),
+      where: 'id = ?',
+      whereArgs: [expense.id],
+    );
+
+    if (updated > 0) {
+      changes.value++;
+    }
+    return updated;
+  }
+
+  Future<int> deleteExpense(int id) async {
+    final db = await AppDatabase.instance.database;
+    final deleted = await db.delete('expenses', where: 'id = ?', whereArgs: [id]);
+    if (deleted > 0) {
+      changes.value++;
+    }
+    return deleted;
+  }
+
   Future<double> sumByDateRange(DateTime start, DateTime end) async {
     final db = await AppDatabase.instance.database;
     final res = await db.rawQuery(
