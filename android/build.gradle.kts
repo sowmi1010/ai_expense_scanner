@@ -7,18 +7,15 @@ allprojects {
     }
 }
 
-val newBuildDir = rootProject.layout.buildDirectory.dir("../build").get()
-rootProject.layout.buildDirectory.value(newBuildDir)
+// ✅ Force build outputs into the Flutter project folder so `flutter run` can find the APK.
+val flutterBuildDir = file("../build")
+rootProject.layout.buildDirectory.set(flutterBuildDir)
 
 subprojects {
-    val newSubprojectBuildDir = newBuildDir.dir(project.name)
-    project.layout.buildDirectory.value(newSubprojectBuildDir)
-}
-
-subprojects {
+    project.layout.buildDirectory.set(File(flutterBuildDir, project.name))
     project.evaluationDependsOn(":app")
 }
 
 tasks.register<Delete>("clean") {
-    delete(rootProject.layout.buildDirectory)
+    delete(flutterBuildDir)
 }
