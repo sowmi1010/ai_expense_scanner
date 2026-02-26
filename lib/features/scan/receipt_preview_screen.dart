@@ -38,6 +38,9 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
   bool _saving = false;
   String _rawText = '';
 
+  // NEW: extracted payment method from OCR (example: "UPI, SuperCoins", "EMI")
+  String? _paymentMethod;
+
   @override
   void initState() {
     super.initState();
@@ -88,14 +91,15 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
       setState(() {
         _imagePath = image.path;
         _rawText = '';
+        _paymentMethod = null;
       });
 
       await _runOcr();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not import image: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not import image: $e')));
     }
   }
 
@@ -108,6 +112,7 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
       final parsed = await _ocr.scanReceiptFromImagePath(_imagePath!);
 
       _rawText = parsed.rawText;
+      _paymentMethod = parsed.paymentMethod;
 
       if (parsed.totalAmount != null) {
         amount.text = parsed.totalAmount!.toStringAsFixed(
@@ -125,14 +130,21 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
         category = parsed.category!;
       }
 
+      // Category improved: include merchant + payment method too
       final categoryFromFullText = ExpenseOptions.detectCategoryFromText(
-        '${parsed.rawText}\n${merchant.text}',
+        '${parsed.rawText}\n${merchant.text}\n${_paymentMethod ?? ''}',
       );
       if (ExpenseOptions.categories.contains(categoryFromFullText)) {
         category = categoryFromFullText;
       }
 
-      paymentMode = ExpenseOptions.detectPaymentModeFromText(parsed.rawText);
+      // Payment mode improved: use both raw text + payment method line
+      final paymentHint = [parsed.paymentMethod, parsed.rawText]
+          .where((e) => e != null && e!.trim().isNotEmpty)
+          .map((e) => e!.trim())
+          .join('\n');
+
+      paymentMode = ExpenseOptions.detectPaymentModeFromText(paymentHint);
       if (!ExpenseOptions.paymentModes.contains(paymentMode)) {
         paymentMode = ExpenseOptions.defaultPaymentMode;
       }
@@ -165,7 +177,8 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
   DateTime? _parseDate(String value) {
     final text = value.trim().toLowerCase();
     if (text.isEmpty || text == 'today') return DateTime.now();
-    if (text == 'yesterday') return DateTime.now().subtract(const Duration(days: 1));
+    if (text == 'yesterday')
+      return DateTime.now().subtract(const Duration(days: 1));
 
     final dmy = RegExp(r'^(\d{1,2})[\/\.\-](\d{1,2})[\/\.\-](\d{2,4})$');
     final ymd = RegExp(r'^(\d{4})[\/\.\-](\d{1,2})[\/\.\-](\d{1,2})$');
@@ -199,7 +212,8 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
   }
 
   DateTime _startOfMonth(DateTime now) => DateTime(now.year, now.month, 1);
-  DateTime _startOfNextMonth(DateTime now) => DateTime(now.year, now.month + 1, 1);
+  DateTime _startOfNextMonth(DateTime now) =>
+      DateTime(now.year, now.month + 1, 1);
 
   Future<void> _checkBudgetAndNotify() async {
     final budget = await BudgetService.instance.getMonthlyBudget();
@@ -221,9 +235,9 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
         final msg =
             'Budget exceeded: ${spent.toStringAsFixed(0)} / ${budget.toStringAsFixed(0)}';
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(msg)),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(msg)));
         }
         await NotificationService.instance.showBudgetAlert(
           title: 'Monthly budget exceeded',
@@ -240,9 +254,9 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
         final msg =
             'You reached ${percent.toStringAsFixed(0)}%: ${spent.toStringAsFixed(0)} / ${budget.toStringAsFixed(0)}';
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(msg)),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(msg)));
         }
         await NotificationService.instance.showBudgetAlert(
           title: 'Budget warning (80%)',
@@ -267,13 +281,17 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
     if (parsedDate == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Please enter valid date (DD-MM-YYYY / today / yesterday)'),
+          content: Text(
+            'Please enter valid date (DD-MM-YYYY / today / yesterday)',
+          ),
         ),
       );
       return;
     }
 
-    final merch = merchant.text.trim().isEmpty ? 'Unknown' : merchant.text.trim();
+    final merch = merchant.text.trim().isEmpty
+        ? 'Unknown'
+        : merchant.text.trim();
     final now = DateTime.now();
     final createdAt = DateTime(
       parsedDate.year,
@@ -302,15 +320,15 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
 
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Expense saved')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Expense saved')));
       Navigator.pop(context);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Save failed: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Save failed: $e')));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -363,7 +381,9 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
                     clipBehavior: Clip.antiAlias,
                     child: _imagePath == null
                         ? Container(
-                            color: cs.surfaceContainerHighest.withValues(alpha: 0.35),
+                            color: cs.surfaceContainerHighest.withValues(
+                              alpha: 0.35,
+                            ),
                             child: Center(
                               child: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
@@ -378,7 +398,9 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
                                   const SizedBox(height: 10),
                                   OutlinedButton.icon(
                                     onPressed: _pickFromGallery,
-                                    icon: const Icon(Icons.photo_library_rounded),
+                                    icon: const Icon(
+                                      Icons.photo_library_rounded,
+                                    ),
                                     label: const Text('Import from gallery'),
                                   ),
                                 ],
@@ -405,6 +427,58 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
                             ],
                           ),
                   ),
+
+                  const SizedBox(height: 14),
+
+                  // NEW: show detected payment method
+                  if (_paymentMethod != null &&
+                      _paymentMethod!.trim().isNotEmpty)
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                        color: cs.surfaceContainerHighest.withValues(
+                          alpha: 0.25,
+                        ),
+                        border: Border.all(
+                          color: cs.outlineVariant.withValues(alpha: 0.30),
+                        ),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.credit_card_rounded,
+                            color: cs.onSurfaceVariant,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Detected payment method',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w900,
+                                    color: cs.onSurface,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  _paymentMethod!,
+                                  style: TextStyle(
+                                    color: cs.onSurfaceVariant,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
                   const SizedBox(height: 14),
                   Text(
                     'Expense details',
@@ -418,7 +492,9 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
                     label: 'Amount',
                     hintText: 'e.g. 450.50',
                     controller: amount,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                   ),
                   const SizedBox(height: 12),
                   _Field(
@@ -457,7 +533,9 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
                     initialValue: paymentMode,
-                    decoration: const InputDecoration(labelText: 'Payment mode'),
+                    decoration: const InputDecoration(
+                      labelText: 'Payment mode',
+                    ),
                     items: ExpenseOptions.paymentModes
                         .map(
                           (item) => DropdownMenuItem<String>(
@@ -487,7 +565,9 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(16),
-                          color: cs.surfaceContainerHighest.withValues(alpha: 0.35),
+                          color: cs.surfaceContainerHighest.withValues(
+                            alpha: 0.35,
+                          ),
                           border: Border.all(
                             color: cs.outlineVariant.withValues(alpha: 0.30),
                           ),

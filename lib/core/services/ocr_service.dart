@@ -9,12 +9,17 @@ class ParsedReceipt {
   final String? merchant;
   final String? category;
 
+  /// Raw payment method text detected from the screenshot/bill.
+  /// Examples: "UPI, SuperCoins", "EMI", "Card", "Cash"
+  final String? paymentMethod;
+
   ParsedReceipt({
     required this.rawText,
     this.totalAmount,
     this.date,
     this.merchant,
     this.category,
+    this.paymentMethod,
   });
 }
 
@@ -62,7 +67,18 @@ class OcrService {
   );
 
   static final RegExp _dateHintRegex = RegExp(
-    r'(\d{1,2}[\/\.\-]\d{1,2}[\/\.\-]\d{2,4}|\bjan\b|\bfeb\b|\bmar\b|\bapr\b|\bmay\b|\bjun\b|\bjul\b|\baug\b|\bsep\b|\boct\b|\bnov\b|\bdec\b)',
+    r'(\d{1,2}[\/\.\-]\d{1,2}[\/\.\-]\d{2,4}|\bjan\b|\bfeb\b|\bmar\b|\bfeb\b|\bapr\b|\bmay\b|\bjun\b|\bjul\b|\baug\b|\bsep\b|\boct\b|\bnov\b|\bdec\b)',
+    caseSensitive: false,
+  );
+
+  /// PAYMENT METHOD detection
+  static final RegExp _paymentMethodLabelRegex = RegExp(
+    r'(payment\s*method|paid\s*(?:using|via)|mode\s*of\s*payment|payment\s*mode)',
+    caseSensitive: false,
+  );
+
+  static final RegExp _paymentMethodValueRegex = RegExp(
+    r'(?:payment\s*method|paid\s*(?:using|via)|mode\s*of\s*payment|payment\s*mode)\s*[:\-]?\s*(.+)',
     caseSensitive: false,
   );
 
@@ -77,6 +93,8 @@ class OcrService {
     final merchant = _guessMerchant(result, lines);
     final total = _extractTotalAmount(lines);
     final date = _extractDate(lines);
+    final paymentMethod = _extractPaymentMethod(lines);
+
     final category = ExpenseOptions.detectCategoryFromText(
       '$normalized\n${merchant ?? ''}',
     );
@@ -87,6 +105,7 @@ class OcrService {
       date: date,
       merchant: merchant,
       category: category,
+      paymentMethod: paymentMethod,
     );
   }
 
@@ -109,7 +128,81 @@ class OcrService {
         .toList();
   }
 
-  String? _guessMerchant(RecognizedText recognizedText, List<String> fallbackLines) {
+  // ---------------- PAYMENT METHOD ----------------
+
+  String? _extractPaymentMethod(List<String> lines) {
+    // 1) Direct line: "Payment method: UPI, SuperCoins"
+    for (final line in lines) {
+      final m = _paymentMethodValueRegex.firstMatch(line);
+      if (m == null) continue;
+
+      final candidate = m.group(1)?.trim();
+      final cleaned = _cleanPaymentMethod(candidate);
+      if (cleaned != null) return cleaned;
+    }
+
+    // 2) If label is in one line and value in next line
+    for (var i = 0; i < lines.length - 1; i++) {
+      final line = lines[i];
+      if (!_paymentMethodLabelRegex.hasMatch(line)) continue;
+
+      final nextLine = lines[i + 1].trim();
+      final cleaned = _cleanPaymentMethod(nextLine);
+      if (cleaned != null) return cleaned;
+    }
+
+    // 3) Fallback: infer from keywords
+    final text = lines.join('\n').toLowerCase();
+
+    if (RegExp(
+      r'\bupi\b|gpay|google\s*pay|phonepe|paytm|bhim',
+    ).hasMatch(text)) {
+      return 'UPI';
+    }
+    if (RegExp(r'\bemi\b').hasMatch(text)) return 'EMI';
+    if (RegExp(r'credit\s*card|debit\s*card|\bcard\b').hasMatch(text)) {
+      return 'Card';
+    }
+    if (RegExp(r'net\s*banking|internet\s*banking').hasMatch(text)) {
+      return 'Net Banking';
+    }
+    if (RegExp(r'bank\s*transfer|neft|imps|rtgs').hasMatch(text)) {
+      return 'Bank Transfer';
+    }
+    if (RegExp(r'wallet').hasMatch(text)) return 'Wallet';
+    if (RegExp(r'cash\s*on\s*delivery|\bcod\b').hasMatch(text)) return 'Cash';
+    if (RegExp(r'\bcash\b').hasMatch(text)) return 'Cash';
+
+    return null;
+  }
+
+  String? _cleanPaymentMethod(String? raw) {
+    if (raw == null) return null;
+
+    var v = raw
+        .replaceAll(RegExp(r'[^A-Za-z0-9 ,\/\-]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+
+    if (v.isEmpty) return null;
+
+    // Avoid taking IDs/mostly numeric as payment method
+    final digitCount = RegExp(r'\d').allMatches(v).length;
+    final letterCount = RegExp(r'[A-Za-z]').allMatches(v).length;
+
+    if (letterCount == 0) return null;
+    if (digitCount > letterCount) return null;
+
+    if (v.length > 40) v = v.substring(0, 40).trim();
+    return v;
+  }
+
+  // ---------------- MERCHANT ----------------
+
+  String? _guessMerchant(
+    RecognizedText recognizedText,
+    List<String> fallbackLines,
+  ) {
     final orderedLines = <String>[];
 
     for (final block in recognizedText.blocks) {
@@ -173,14 +266,16 @@ class OcrService {
     }
 
     if (best != null && bestScore > 0) return best;
-    return orderedLines.isNotEmpty ? _cleanMerchantLine(orderedLines.first) : null;
+    return orderedLines.isNotEmpty
+        ? _cleanMerchantLine(orderedLines.first)
+        : null;
   }
 
   String _cleanMerchantLine(String line) {
-    return line.replaceAll(RegExp(r'[^A-Za-z0-9 &\.\-]'), ' ').replaceAll(
-      RegExp(r'\s+'),
-      ' ',
-    ).trim();
+    return line
+        .replaceAll(RegExp(r'[^A-Za-z0-9 &\.\-]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
   }
 
   bool _isLikelyMerchant(String line) {
@@ -188,6 +283,8 @@ class OcrService {
     if (RegExp(r'^\d+$').hasMatch(line)) return false;
     return RegExp(r'[A-Za-z]').hasMatch(line);
   }
+
+  // ---------------- AMOUNT ----------------
 
   double? _extractTotalAmount(List<String> lines) {
     final candidates = <_AmountCandidate>[];
@@ -208,15 +305,11 @@ class OcrService {
     final best = candidates.first;
     if (best.score >= 3) return best.value;
 
-    final currencyMatches = candidates
-        .where((c) => c.hasCurrency)
-        .toList()
+    final currencyMatches = candidates.where((c) => c.hasCurrency).toList()
       ..sort((a, b) => b.value.compareTo(a.value));
     if (currencyMatches.isNotEmpty) return currencyMatches.first.value;
 
-    final nonNoisy = candidates
-        .where((c) => c.score > -3)
-        .toList()
+    final nonNoisy = candidates.where((c) => c.score > -3).toList()
       ..sort((a, b) => b.value.compareTo(a.value));
     if (nonNoisy.isNotEmpty) return nonNoisy.first.value;
 
@@ -316,7 +409,9 @@ class OcrService {
     }
 
     for (final match in _plainAmountRegex.allMatches(line)) {
-      final overlap = usedRanges.any((range) => range.overlaps(match.start, match.end));
+      final overlap = usedRanges.any(
+        (range) => range.overlaps(match.start, match.end),
+      );
       if (overlap) continue;
 
       final token = match.group(1);
@@ -390,7 +485,11 @@ class OcrService {
     return plainValues.isNotEmpty ? plainValues.last : null;
   }
 
-  int _scoreAmountCandidate(String line, double value, {required bool hasCurrency}) {
+  int _scoreAmountCandidate(
+    String line,
+    double value, {
+    required bool hasCurrency,
+  }) {
     final lower = line.toLowerCase();
     var score = 0;
 
@@ -401,7 +500,8 @@ class OcrService {
     if (_taxKeywordsRegex.hasMatch(lower)) score -= 6;
     if (_dateHintRegex.hasMatch(lower)) score -= 3;
 
-    if (RegExp(r'\bpaid\b', caseSensitive: false).hasMatch(lower) && hasCurrency) {
+    if (RegExp(r'\bpaid\b', caseSensitive: false).hasMatch(lower) &&
+        hasCurrency) {
       score += 3;
     }
     if (RegExp(r'^\s*(\u20B9|rs|inr)', caseSensitive: false).hasMatch(line)) {
@@ -412,7 +512,9 @@ class OcrService {
     final isLikelyYear = rounded >= 1900 && rounded <= 2099 && value % 1 == 0;
     if (isLikelyYear && !hasCurrency) score -= 9;
 
-    if (!hasCurrency && value >= 10000 && !_mediumAmountKeywordsRegex.hasMatch(lower)) {
+    if (!hasCurrency &&
+        value >= 10000 &&
+        !_mediumAmountKeywordsRegex.hasMatch(lower)) {
       score -= 5;
     }
 
@@ -421,6 +523,8 @@ class OcrService {
 
     return score;
   }
+
+  // ---------------- DATE ----------------
 
   DateTime? _extractDate(List<String> lines) {
     final now = DateTime.now();
@@ -435,12 +539,16 @@ class OcrService {
       for (final date in lineDates) {
         var score = 0;
 
-        if (RegExp(r'(paid|completed|transaction|payment)', caseSensitive: false)
-            .hasMatch(lower)) {
+        if (RegExp(
+          r'(paid|completed|transaction|payment)',
+          caseSensitive: false,
+        ).hasMatch(lower)) {
           score += 6;
         }
-        if (RegExp(r'(bill\s*date|invoice\s*date)', caseSensitive: false)
-            .hasMatch(lower)) {
+        if (RegExp(
+          r'(bill\s*date|invoice\s*date)',
+          caseSensitive: false,
+        ).hasMatch(lower)) {
           score += 4;
         }
         if (RegExp(r'due\s*date', caseSensitive: false).hasMatch(lower)) {

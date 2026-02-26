@@ -1,4 +1,4 @@
-import java.io.File
+import org.gradle.api.tasks.Delete
 
 allprojects {
     repositories {
@@ -7,18 +7,14 @@ allprojects {
     }
 }
 
-// Keep Android build outputs on the same drive as pub cache (usually C:) to
-// avoid Gradle path-relativize failures on Windows when project is on another drive.
-val localAppData =
-    System.getenv("LOCALAPPDATA")
-        ?: "${System.getProperty("user.home")}\\AppData\\Local"
-val newBuildDir = File(localAppData, "ai_expense_scanner\\build")
-rootProject.layout.buildDirectory.set(newBuildDir)
+val newBuildDir = rootProject.layout.buildDirectory.dir("../build").get()
+rootProject.layout.buildDirectory.value(newBuildDir)
 
 subprojects {
-    val newSubprojectBuildDir = File(newBuildDir, project.name)
-    project.layout.buildDirectory.set(newSubprojectBuildDir)
+    val newSubprojectBuildDir = newBuildDir.dir(project.name)
+    project.layout.buildDirectory.value(newSubprojectBuildDir)
 }
+
 subprojects {
     project.evaluationDependsOn(":app")
 }

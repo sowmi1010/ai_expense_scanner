@@ -233,10 +233,6 @@ class ExpenseOptions {
       'rtgs',
       'imps',
       'upi transfer',
-      'google pay',
-      'gpay',
-      'phonepe',
-      'paytm',
       'beneficiary',
       'account transfer',
     ])) {
@@ -248,29 +244,75 @@ class ExpenseOptions {
 
   static String detectPaymentModeFromText(String text) {
     final t = text.toLowerCase();
-
     bool hasAny(List<String> keys) => keys.any(t.contains);
 
-    if (hasAny(['google pay', 'gpay', 'upi', 'phonepe', 'paytm', 'bhim'])) {
+    // 1) COD / CASH first (important: COD should not be misread as anything else)
+    if (hasAny(['cash on delivery', 'cod'])) {
+      return 'Cash';
+    }
+
+    // 2) UPI-based payments
+    if (hasAny([
+      'upi',
+      'upi id',
+      'upi transaction',
+      'utr',
+      'gpay',
+      'google pay',
+      'phonepe',
+      'paytm',
+      'bhim',
+    ])) {
       return 'UPI/GPay';
     }
 
-    if (hasAny(['bank transfer', 'neft', 'imps', 'rtgs'])) {
-      return 'Bank Transfer';
-    }
-
-    if (hasAny(['credit card', 'debit card', 'card'])) {
+    // 3) EMI is usually card payment (Flipkart/Amazon show "EMI")
+    if (hasAny([
+      'emi',
+      'no cost emi',
+      'nocost emi',
+      'installment',
+      'instalment',
+    ])) {
       return 'Card';
     }
 
-    if (hasAny(['wallet'])) {
+    // 4) Bank transfer keywords
+    if (hasAny([
+      'bank transfer',
+      'neft',
+      'imps',
+      'rtgs',
+      'account transfer',
+      'transfer details',
+    ])) {
+      return 'Bank Transfer';
+    }
+
+    // 5) Cards
+    if (hasAny([
+      'credit card',
+      'debit card',
+      'card',
+      'visa',
+      'mastercard',
+      'rupay',
+      'amex',
+    ])) {
+      return 'Card';
+    }
+
+    // 6) Wallets
+    if (hasAny(['wallet', 'amazon pay', 'paytm wallet', 'phonepe wallet'])) {
       return 'Wallet';
     }
 
-    if (hasAny(['net banking', 'internet banking'])) {
+    // 7) Net banking
+    if (hasAny(['net banking', 'internet banking', 'online banking'])) {
       return 'Net Banking';
     }
 
+    // 8) Generic cash
     if (hasAny(['cash'])) {
       return 'Cash';
     }
