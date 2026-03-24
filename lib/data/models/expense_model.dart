@@ -1,3 +1,12 @@
+class ExpenseValidationException implements Exception {
+  final String message;
+
+  ExpenseValidationException(this.message);
+
+  @override
+  String toString() => message;
+}
+
 class ExpenseModel {
   final int? id;
   final double amount;
@@ -43,5 +52,14 @@ class ExpenseModel {
       receiptImagePath: map['receipt_image_path'] as String?,
       rawOcrText: map['raw_ocr_text'] as String?,
     );
+  }
+
+  void validateOrThrow() {
+    if (amount <= 0) {
+      throw ExpenseValidationException('Amount must be greater than 0');
+    }
+    if (category.trim().isEmpty) {
+      throw ExpenseValidationException('Category is required');
+    }
   }
 }

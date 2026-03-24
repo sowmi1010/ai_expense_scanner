@@ -1,203 +1,304 @@
-import 'package:flutter/foundation.dart';
-import '../database/app_database.dart';
+import 'dart:async';
+import 'dart:collection';
+
 import '../models/expense_model.dart';
+import '../services/expense_local_service.dart';
+import '../services/expense_sync_service.dart';
+import '../../core/logging/app_logger.dart';
+import 'expense_repo.dart';
 
-class DailyTotal {
-  final DateTime day; // start of day
-  final double total;
+export 'expense_repo.dart'
+    show CategoryTotal, DailyTotal, ExpenseRepo, OfflineSyncState;
 
-  DailyTotal({required this.day, required this.total});
+enum _SyncOperationType { upsert, delete }
+
+class _PendingSyncOperation {
+  final _SyncOperationType type;
+  final ExpenseModel? expense;
+  final int? expenseId;
+
+  const _PendingSyncOperation.upsert(this.expense)
+    : type = _SyncOperationType.upsert,
+      expenseId = null;
+
+  const _PendingSyncOperation.delete(this.expenseId)
+    : type = _SyncOperationType.delete,
+      expense = null;
+
+  String get dedupeKey {
+    switch (type) {
+      case _SyncOperationType.upsert:
+        return 'upsert:${expense?.id ?? 'unknown'}';
+      case _SyncOperationType.delete:
+        return 'delete:${expenseId ?? 'unknown'}';
+    }
+  }
 }
 
-class CategoryTotal {
-  final String category;
-  final double total;
+class ExpenseRepository extends ExpenseRepo {
+  final ExpenseLocalService _localService;
+  final ExpenseSyncService _syncService;
 
-  CategoryTotal({required this.category, required this.total});
-}
+  static const int _maxCacheEntries = 120;
 
-class ExpenseRepository {
-  ExpenseRepository._internal();
-  static final ExpenseRepository instance = ExpenseRepository._internal();
+  final LinkedHashMap<String, double> _sumByRangeCache = LinkedHashMap();
+  final LinkedHashMap<String, int> _countByRangeCache = LinkedHashMap();
+  final LinkedHashMap<String, List<ExpenseModel>> _expensesInRangeCache =
+      LinkedHashMap();
+  final LinkedHashMap<String, List<DailyTotal>> _dailyTotalsCache =
+      LinkedHashMap();
+  final LinkedHashMap<String, List<CategoryTotal>> _categoryTotalsCache =
+      LinkedHashMap();
+  final LinkedHashMap<String, double> _sumByDateCategoryCache = LinkedHashMap();
 
-  /// Notifies UI when expenses are added/changed
-  final ValueNotifier<int> changes = ValueNotifier<int>(0);
+  final List<_PendingSyncOperation> _pendingSyncOperations = [];
+  bool _syncInProgress = false;
+  DateTime? _lastSyncAttemptAt;
+  String? _lastSyncError;
 
+  ExpenseRepository({
+    required ExpenseLocalService localService,
+    ExpenseSyncService? syncService,
+  }) : _localService = localService,
+       _syncService = syncService ?? const NoopExpenseSyncService();
+
+  @override
+  OfflineSyncState get syncState {
+    if (!_syncService.isEnabled) return OfflineSyncState.disabled;
+
+    return OfflineSyncState(
+      syncEnabled: true,
+      syncInProgress: _syncInProgress,
+      pendingOperations: _pendingSyncOperations.length,
+      lastSyncAttemptAt: _lastSyncAttemptAt,
+      lastSyncError: _lastSyncError,
+    );
+  }
+
+  @override
+  Future<void> retryPendingSync() => _flushPendingSync();
+
+  String _rangeKey(DateTime start, DateTime end) =>
+      '${start.toIso8601String()}|${end.toIso8601String()}';
+
+  void _cachePut<K, V>(LinkedHashMap<K, V> cache, K key, V value) {
+    if (!cache.containsKey(key) && cache.length >= _maxCacheEntries) {
+      cache.remove(cache.keys.first);
+    }
+    cache[key] = value;
+  }
+
+  void _clearReadCaches() {
+    _sumByRangeCache.clear();
+    _countByRangeCache.clear();
+    _expensesInRangeCache.clear();
+    _dailyTotalsCache.clear();
+    _categoryTotalsCache.clear();
+    _sumByDateCategoryCache.clear();
+  }
+
+  void _notifyDataChanged() {
+    _clearReadCaches();
+    notifyListeners();
+  }
+
+  ExpenseModel _withId(ExpenseModel expense, int id) {
+    return ExpenseModel(
+      id: id,
+      amount: expense.amount,
+      merchant: expense.merchant,
+      category: expense.category,
+      paymentMode: expense.paymentMode,
+      createdAt: expense.createdAt,
+      receiptImagePath: expense.receiptImagePath,
+      rawOcrText: expense.rawOcrText,
+    );
+  }
+
+  void _enqueueSyncOperation(_PendingSyncOperation operation) {
+    if (!_syncService.isEnabled) return;
+
+    _pendingSyncOperations.removeWhere(
+      (item) =>
+          item.dedupeKey == operation.dedupeKey ||
+          (item.expense?.id != null &&
+              operation.expenseId != null &&
+              item.expense!.id == operation.expenseId),
+    );
+    _pendingSyncOperations.add(operation);
+    AppLogger.info(
+      'Queued offline sync operation (${operation.type.name}). Pending: ${_pendingSyncOperations.length}',
+    );
+    notifyListeners();
+
+    unawaited(_flushPendingSync());
+  }
+
+  Future<void> _applySyncOperation(_PendingSyncOperation operation) async {
+    switch (operation.type) {
+      case _SyncOperationType.upsert:
+        final expense = operation.expense;
+        if (expense == null) return;
+        await _syncService.upsertExpense(expense);
+        return;
+      case _SyncOperationType.delete:
+        final expenseId = operation.expenseId;
+        if (expenseId == null) return;
+        await _syncService.deleteExpense(expenseId);
+        return;
+    }
+  }
+
+  Future<void> _flushPendingSync() async {
+    if (!_syncService.isEnabled ||
+        _syncInProgress ||
+        _pendingSyncOperations.isEmpty) {
+      return;
+    }
+
+    _syncInProgress = true;
+    notifyListeners();
+
+    try {
+      while (_pendingSyncOperations.isNotEmpty) {
+        final operation = _pendingSyncOperations.first;
+        _lastSyncAttemptAt = DateTime.now();
+
+        try {
+          await _applySyncOperation(operation);
+          _pendingSyncOperations.removeAt(0);
+          _lastSyncError = null;
+          AppLogger.debug(
+            'Synced pending operation (${operation.type.name}). Remaining: ${_pendingSyncOperations.length}',
+          );
+        } catch (e) {
+          _lastSyncError = e.toString();
+          AppLogger.warning(
+            'Sync failed. Keeping operation queued for retry.',
+            error: e,
+          );
+          break;
+        }
+      }
+    } finally {
+      _syncInProgress = false;
+      notifyListeners();
+    }
+  }
+
+  @override
   Future<int> insertExpense(ExpenseModel expense) async {
-    final db = await AppDatabase.instance.database;
-    final id = await db.insert('expenses', expense.toMap());
-    changes.value++;
+    expense.validateOrThrow();
+
+    final id = await _localService.insertExpense(expense);
+    final persisted = _withId(expense, id);
+    _enqueueSyncOperation(_PendingSyncOperation.upsert(persisted));
+    _notifyDataChanged();
     return id;
   }
 
+  @override
   Future<int> updateExpense(ExpenseModel expense) async {
     if (expense.id == null) return 0;
+    expense.validateOrThrow();
 
-    final db = await AppDatabase.instance.database;
-    final updated = await db.update(
-      'expenses',
-      expense.toMap(),
-      where: 'id = ?',
-      whereArgs: [expense.id],
-    );
-
+    final updated = await _localService.updateExpense(expense);
     if (updated > 0) {
-      changes.value++;
+      _enqueueSyncOperation(_PendingSyncOperation.upsert(expense));
+      _notifyDataChanged();
     }
     return updated;
   }
 
+  @override
   Future<int> deleteExpense(int id) async {
-    final db = await AppDatabase.instance.database;
-    final deleted = await db.delete('expenses', where: 'id = ?', whereArgs: [id]);
+    final deleted = await _localService.deleteExpense(id);
     if (deleted > 0) {
-      changes.value++;
+      _enqueueSyncOperation(_PendingSyncOperation.delete(id));
+      _notifyDataChanged();
     }
     return deleted;
   }
 
+  @override
   Future<double> sumByDateRange(DateTime start, DateTime end) async {
-    final db = await AppDatabase.instance.database;
-    final res = await db.rawQuery(
-      '''
-      SELECT IFNULL(SUM(amount), 0) AS total
-      FROM expenses
-      WHERE datetime(created_at) >= datetime(?) AND datetime(created_at) < datetime(?)
-    ''',
-      [start.toIso8601String(), end.toIso8601String()],
-    );
-    return (res.first['total'] as num).toDouble();
+    final key = _rangeKey(start, end);
+    final cached = _sumByRangeCache[key];
+    if (cached != null) return cached;
+
+    final total = await _localService.sumByDateRange(start, end);
+    _cachePut(_sumByRangeCache, key, total);
+    return total;
   }
 
+  @override
   Future<int> countByDateRange(DateTime start, DateTime end) async {
-    final db = await AppDatabase.instance.database;
-    final res = await db.rawQuery(
-      '''
-      SELECT COUNT(*) AS cnt
-      FROM expenses
-      WHERE datetime(created_at) >= datetime(?) AND datetime(created_at) < datetime(?)
-    ''',
-      [start.toIso8601String(), end.toIso8601String()],
-    );
-    return (res.first['cnt'] as num).toInt();
+    final key = _rangeKey(start, end);
+    final cached = _countByRangeCache[key];
+    if (cached != null) return cached;
+
+    final count = await _localService.countByDateRange(start, end);
+    _cachePut(_countByRangeCache, key, count);
+    return count;
   }
 
-  // ✅ Export helper: fetch expenses in a date range
+  @override
   Future<List<ExpenseModel>> getExpensesInRange(
     DateTime start,
     DateTime end,
   ) async {
-    final db = await AppDatabase.instance.database;
+    final key = _rangeKey(start, end);
+    final cached = _expensesInRangeCache[key];
+    if (cached != null) return cached;
 
-    final rows = await db.query(
-      'expenses',
-      where:
-          'datetime(created_at) >= datetime(?) AND datetime(created_at) < datetime(?)',
-      whereArgs: [start.toIso8601String(), end.toIso8601String()],
-      orderBy: 'datetime(created_at) DESC',
-    );
-
-    return rows.map(ExpenseModel.fromMap).toList();
+    final items = await _localService.getExpensesInRange(start, end);
+    _cachePut(_expensesInRangeCache, key, items);
+    return items;
   }
 
-  // =========================
-  // CHART QUERIES
-  // =========================
-
-  /// Last N days totals (including today). Returns one item per day (0 if no spend).
+  @override
   Future<List<DailyTotal>> getDailyTotals({int days = 7}) async {
-    final db = await AppDatabase.instance.database;
-
     final now = DateTime.now();
-    final start = DateTime(
-      now.year,
-      now.month,
-      now.day,
-    ).subtract(Duration(days: days - 1));
-    final end = DateTime(
-      now.year,
-      now.month,
-      now.day,
-    ).add(const Duration(days: 1));
+    final dayKey = '${now.year}-${now.month}-${now.day}';
+    final key = '$dayKey|$days';
+    final cached = _dailyTotalsCache[key];
+    if (cached != null) return cached;
 
-    final rows = await db.rawQuery(
-      '''
-      SELECT substr(created_at, 1, 10) AS day, IFNULL(SUM(amount), 0) AS total
-      FROM expenses
-      WHERE datetime(created_at) >= datetime(?) AND datetime(created_at) < datetime(?)
-      GROUP BY substr(created_at, 1, 10)
-      ORDER BY day ASC
-    ''',
-      [start.toIso8601String(), end.toIso8601String()],
-    );
-
-    final map = <String, double>{};
-    for (final r in rows) {
-      final day = (r['day'] as String?) ?? '';
-      final total = (r['total'] as num).toDouble();
-      map[day] = total;
-    }
-
-    final out = <DailyTotal>[];
-    for (int i = 0; i < days; i++) {
-      final d = start.add(Duration(days: i));
-      final key = d.toIso8601String().substring(0, 10); // yyyy-MM-dd
-      out.add(
-        DailyTotal(day: DateTime(d.year, d.month, d.day), total: map[key] ?? 0),
-      );
-    }
-
-    return out;
+    final items = await _localService.getDailyTotals(days: days);
+    _cachePut(_dailyTotalsCache, key, items);
+    return items;
   }
 
-  /// Category totals within a date range (good for month pie).
+  @override
   Future<List<CategoryTotal>> getCategoryTotals(
     DateTime start,
     DateTime end,
   ) async {
-    final db = await AppDatabase.instance.database;
+    final key = _rangeKey(start, end);
+    final cached = _categoryTotalsCache[key];
+    if (cached != null) return cached;
 
-    final rows = await db.rawQuery(
-      '''
-      SELECT category, IFNULL(SUM(amount), 0) AS total
-      FROM expenses
-      WHERE datetime(created_at) >= datetime(?) AND datetime(created_at) < datetime(?)
-      GROUP BY category
-      ORDER BY total DESC
-    ''',
-      [start.toIso8601String(), end.toIso8601String()],
-    );
-
-    return rows
-        .map(
-          (r) => CategoryTotal(
-            category: (r['category'] as String?) ?? 'Others',
-            total: (r['total'] as num).toDouble(),
-          ),
-        )
-        .toList();
+    final items = await _localService.getCategoryTotals(start, end);
+    _cachePut(_categoryTotalsCache, key, items);
+    return items;
   }
 
+  @override
   Future<double> sumByDateAndCategory(
     DateTime start,
     DateTime end,
     String? category,
   ) async {
-    final db = await AppDatabase.instance.database;
+    final key = '${_rangeKey(start, end)}|${category ?? '_all'}';
+    final cached = _sumByDateCategoryCache[key];
+    if (cached != null) return cached;
 
-    final res = await db.rawQuery(
-      '''
-      SELECT IFNULL(SUM(amount), 0) AS total
-      FROM expenses
-      WHERE datetime(created_at) >= datetime(?)
-        AND datetime(created_at) < datetime(?)
-        ${category != null ? 'AND category = ?' : ''}
-    ''',
-      category != null
-          ? [start.toIso8601String(), end.toIso8601String(), category]
-          : [start.toIso8601String(), end.toIso8601String()],
+    final total = await _localService.sumByDateAndCategory(
+      start,
+      end,
+      category,
     );
-
-    return (res.first['total'] as num).toDouble();
+    _cachePut(_sumByDateCategoryCache, key, total);
+    return total;
   }
 }

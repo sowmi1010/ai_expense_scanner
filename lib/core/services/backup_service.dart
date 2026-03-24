@@ -3,11 +3,9 @@ import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
 class BackupService {
-  BackupService._internal();
-  static final BackupService instance = BackupService._internal();
+  final String dbName;
 
-  // Your DB name from AppDatabase
-  static const String dbName = 'expense_ai.db';
+  BackupService({this.dbName = 'expense_ai.db'});
 
   /// Copies the SQLite DB to a new file (safe to share)
   Future<File> backupDatabaseToFile({

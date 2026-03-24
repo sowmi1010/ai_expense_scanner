@@ -1,4 +1,5 @@
 import org.gradle.api.tasks.Delete
+import org.gradle.api.tasks.compile.JavaCompile
 
 allprojects {
     repositories {
@@ -14,6 +15,12 @@ rootProject.layout.buildDirectory.set(flutterBuildDir)
 subprojects {
     project.layout.buildDirectory.set(File(flutterBuildDir, project.name))
     project.evaluationDependsOn(":app")
+
+    tasks.withType<JavaCompile>().configureEach {
+        if (!options.compilerArgs.contains("-Xlint:-options")) {
+            options.compilerArgs.add("-Xlint:-options")
+        }
+    }
 }
 
 tasks.register<Delete>("clean") {

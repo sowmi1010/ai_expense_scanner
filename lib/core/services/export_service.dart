@@ -7,8 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import '../../data/models/expense_model.dart';
 
 class ExportService {
-  ExportService._internal();
-  static final ExportService instance = ExportService._internal();
+  ExportService();
 
   Future<File> exportCsv({
     required List<ExpenseModel> expenses,

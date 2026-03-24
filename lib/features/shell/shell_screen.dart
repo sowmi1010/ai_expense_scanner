@@ -22,12 +22,6 @@ class _ShellScreenState extends State<ShellScreen> {
     _NavItemData(label: 'Monthly', icon: Icons.calendar_month_rounded),
   ];
 
-  final pages = const [
-    DashboardScreen(),
-    ScanLandingScreen(),
-    MonthlyOverviewScreen(),
-  ];
-
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -38,14 +32,13 @@ class _ShellScreenState extends State<ShellScreen> {
         fit: StackFit.expand,
         children: [
           const _ShellBackdrop(),
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 260),
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInCubic,
-            child: KeyedSubtree(
-              key: ValueKey(index),
-              child: pages[index],
-            ),
+          IndexedStack(
+            index: index,
+            children: const [
+              DashboardScreen(),
+              ScanLandingScreen(),
+              MonthlyOverviewScreen(),
+            ],
           ),
         ],
       ),
@@ -63,7 +56,10 @@ class _ShellScreenState extends State<ShellScreen> {
             child: BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 10,
+                ),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(30),
                   gradient: LinearGradient(
@@ -87,18 +83,20 @@ class _ShellScreenState extends State<ShellScreen> {
                   ],
                 ),
                 child: Row(
-                  children: List.generate(_items.length, (i) {
-                    final item = _items[i];
-                    return Padding(
-                      padding: EdgeInsets.only(right: i == _items.length - 1 ? 0 : 8),
-                      child: _NavItem(
-                        label: item.label,
-                        icon: item.icon,
+                  children: [
+                    for (int i = 0; i < _items.length; i++) ...[
+                      _NavItem(
+                        label: _items[i].label,
+                        icon: _items[i].icon,
                         selected: index == i,
-                        onTap: () => setState(() => index = i),
+                        onTap: () {
+                          if (index == i) return;
+                          setState(() => index = i);
+                        },
                       ),
-                    );
-                  }),
+                      if (i != _items.length - 1) const SizedBox(width: 8),
+                    ],
+                  ],
                 ),
               ),
             ),
@@ -220,26 +218,17 @@ class _ShellBackdrop extends StatelessWidget {
           Positioned(
             top: -95,
             right: -72,
-            child: _Orb(
-              size: 240,
-              color: cs.primary.withValues(alpha: 0.16),
-            ),
+            child: _Orb(size: 240, color: cs.primary.withValues(alpha: 0.16)),
           ),
           Positioned(
             top: 140,
             left: -70,
-            child: _Orb(
-              size: 190,
-              color: cs.tertiary.withValues(alpha: 0.12),
-            ),
+            child: _Orb(size: 190, color: cs.tertiary.withValues(alpha: 0.12)),
           ),
           Positioned(
             bottom: 110,
             right: -30,
-            child: _Orb(
-              size: 150,
-              color: cs.secondary.withValues(alpha: 0.14),
-            ),
+            child: _Orb(size: 150, color: cs.secondary.withValues(alpha: 0.14)),
           ),
         ],
       ),
@@ -261,13 +250,7 @@ class _Orb extends StatelessWidget {
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: color,
-        boxShadow: [
-          BoxShadow(
-            color: color,
-            blurRadius: 90,
-            spreadRadius: 16,
-          ),
-        ],
+        boxShadow: [BoxShadow(color: color, blurRadius: 90, spreadRadius: 16)],
       ),
     );
   }

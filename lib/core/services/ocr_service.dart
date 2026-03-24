@@ -1,6 +1,11 @@
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
+import '../constants/app_strings.dart';
 import '../constants/expense_options.dart';
+import '../logging/app_logger.dart';
 
 class ParsedReceipt {
   final String rawText;
@@ -20,6 +25,18 @@ class ParsedReceipt {
     this.merchant,
     this.category,
     this.paymentMethod,
+  });
+}
+
+class OcrScanResult {
+  final ParsedReceipt parsedReceipt;
+  final bool usedFallback;
+  final String? message;
+
+  const OcrScanResult({
+    required this.parsedReceipt,
+    required this.usedFallback,
+    this.message,
   });
 }
 
@@ -82,6 +99,58 @@ class OcrService {
     caseSensitive: false,
   );
 
+  Future<OcrScanResult> scanReceiptWithFallback(String? imagePath) async {
+    if (imagePath == null || imagePath.trim().isEmpty) {
+      return OcrScanResult(
+        parsedReceipt: ParsedReceipt(rawText: ''),
+        usedFallback: true,
+        message: AppStrings.ocrNoImageFallback,
+      );
+    }
+
+    if (kIsWeb) {
+      return OcrScanResult(
+        parsedReceipt: ParsedReceipt(rawText: ''),
+        usedFallback: true,
+        message:
+            'OCR is currently unavailable on web. Please enter details manually.',
+      );
+    }
+
+    final imageFile = File(imagePath);
+    if (!await imageFile.exists()) {
+      return OcrScanResult(
+        parsedReceipt: ParsedReceipt(rawText: ''),
+        usedFallback: true,
+        message: AppStrings.ocrUnavailablePhotoFallback,
+      );
+    }
+
+    try {
+      final parsed = await scanReceiptFromImagePath(imagePath);
+      if (_isEmptyParsedReceipt(parsed)) {
+        return OcrScanResult(
+          parsedReceipt: parsed,
+          usedFallback: true,
+          message: AppStrings.ocrLowConfidenceFallback,
+        );
+      }
+
+      return OcrScanResult(parsedReceipt: parsed, usedFallback: false);
+    } catch (e, stackTrace) {
+      AppLogger.warning(
+        'OCR processing failed. Falling back to manual entry.',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      return OcrScanResult(
+        parsedReceipt: ParsedReceipt(rawText: ''),
+        usedFallback: true,
+        message: AppStrings.ocrFailedFallback,
+      );
+    }
+  }
+
   Future<ParsedReceipt> scanReceiptFromImagePath(String imagePath) async {
     final inputImage = InputImage.fromFilePath(imagePath);
     final result = await _recognizer.processImage(inputImage);
@@ -107,6 +176,15 @@ class OcrService {
       category: category,
       paymentMethod: paymentMethod,
     );
+  }
+
+  bool _isEmptyParsedReceipt(ParsedReceipt parsed) {
+    return parsed.rawText.trim().isEmpty &&
+        parsed.totalAmount == null &&
+        parsed.date == null &&
+        (parsed.merchant == null || parsed.merchant!.trim().isEmpty) &&
+        (parsed.category == null || parsed.category!.trim().isEmpty) &&
+        (parsed.paymentMethod == null || parsed.paymentMethod!.trim().isEmpty);
   }
 
   String _normalizeText(String text) {

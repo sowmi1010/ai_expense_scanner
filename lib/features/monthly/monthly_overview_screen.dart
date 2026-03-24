@@ -1,22 +1,24 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/constants/expense_options.dart';
 import '../../core/ui/app_spacing.dart';
 import '../../core/ui/glass.dart';
 import '../../data/models/expense_model.dart';
-import '../../data/repositories/expense_repository.dart';
+import '../../state/controllers/monthly_expense_controller.dart';
+import '../../state/providers/expense_providers.dart';
 
-class MonthlyOverviewScreen extends StatefulWidget {
+class MonthlyOverviewScreen extends ConsumerStatefulWidget {
   const MonthlyOverviewScreen({super.key});
 
   @override
-  State<MonthlyOverviewScreen> createState() => _MonthlyOverviewScreenState();
+  ConsumerState<MonthlyOverviewScreen> createState() =>
+      _MonthlyOverviewScreenState();
 }
 
-class _MonthlyOverviewScreenState extends State<MonthlyOverviewScreen>
+class _MonthlyOverviewScreenState extends ConsumerState<MonthlyOverviewScreen>
     with SingleTickerProviderStateMixin {
-  final _repo = ExpenseRepository.instance;
   final _moneyFormatter = NumberFormat.currency(
     locale: 'en_IN',
     symbol: 'Rs ',
@@ -28,27 +30,18 @@ class _MonthlyOverviewScreenState extends State<MonthlyOverviewScreen>
   late final TabController _tabController;
 
   DateTime _month = DateTime(DateTime.now().year, DateTime.now().month, 1);
-  bool _loading = true;
-  List<CategoryTotal> _categoryTotals = const [];
-  List<ExpenseModel> _expenses = const [];
-  double _total = 0;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    _load();
-    _repo.changes.addListener(_load);
   }
 
   @override
   void dispose() {
-    _repo.changes.removeListener(_load);
     _tabController.dispose();
     super.dispose();
   }
-
-  DateTime get _nextMonthStart => DateTime(_month.year, _month.month + 1, 1);
 
   bool get _canGoNextMonth {
     final now = DateTime.now();
@@ -59,63 +52,30 @@ class _MonthlyOverviewScreenState extends State<MonthlyOverviewScreen>
   String _money(double value) => _moneyFormatter.format(value);
   String _formatDate(DateTime value) => DateFormat('dd-MM-yyyy').format(value);
 
-  Future<void> _load() async {
-    if (!mounted) return;
-    setState(() => _loading = true);
-
-    try {
-      final raw = await _repo.getCategoryTotals(_month, _nextMonthStart);
-      final expenses = await _repo.getExpensesInRange(_month, _nextMonthStart);
-
-      final totalsByCategory = <String, double>{};
-      for (final item in raw) {
-        totalsByCategory[item.category] =
-            (totalsByCategory[item.category] ?? 0) + item.total;
-      }
-
-      final rows = <CategoryTotal>[];
-      for (final name in ExpenseOptions.categories) {
-        rows.add(CategoryTotal(category: name, total: totalsByCategory[name] ?? 0));
-      }
-
-      final extras = totalsByCategory.keys
-          .where((name) => !ExpenseOptions.categories.contains(name))
-          .toList()
-        ..sort(
-          (a, b) =>
-              (totalsByCategory[b] ?? 0).compareTo(totalsByCategory[a] ?? 0),
-        );
-
-      for (final name in extras) {
-        rows.add(CategoryTotal(category: name, total: totalsByCategory[name] ?? 0));
-      }
-
-      final total = rows.fold<double>(0, (sum, e) => sum + e.total);
-
-      if (!mounted) return;
-      setState(() {
-        _categoryTotals = rows;
-        _expenses = expenses;
-        _total = total;
-        _loading = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _loading = false);
-    }
-  }
-
   void _changeMonth(int delta) {
     setState(() {
       _month = DateTime(_month.year, _month.month + delta, 1);
     });
-    _load();
+  }
+
+  Future<void> _refreshCurrentMonth() async {
+    try {
+      ref.invalidate(monthlyOverviewProvider(_month));
+      await ref.read(monthlyOverviewProvider(_month).future);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Refresh failed: $e')));
+    }
   }
 
   DateTime? _parseDate(String value) {
     final text = value.trim().toLowerCase();
     if (text.isEmpty || text == 'today') return DateTime.now();
-    if (text == 'yesterday') return DateTime.now().subtract(const Duration(days: 1));
+    if (text == 'yesterday') {
+      return DateTime.now().subtract(const Duration(days: 1));
+    }
 
     final dmy = RegExp(r'^(\d{1,2})[\/\.\-](\d{1,2})[\/\.\-](\d{2,4})$');
     final ymd = RegExp(r'^(\d{4})[\/\.\-](\d{1,2})[\/\.\-](\d{1,2})$');
@@ -155,7 +115,9 @@ class _MonthlyOverviewScreenState extends State<MonthlyOverviewScreen>
           : expense.amount.toStringAsFixed(2),
     );
     final merchantController = TextEditingController(text: expense.merchant);
-    final dateController = TextEditingController(text: _formatDate(expense.createdAt));
+    final dateController = TextEditingController(
+      text: _formatDate(expense.createdAt),
+    );
 
     var selectedCategory = expense.category;
     if (!ExpenseOptions.categories.contains(selectedCategory)) {
@@ -217,7 +179,9 @@ class _MonthlyOverviewScreenState extends State<MonthlyOverviewScreen>
                     const SizedBox(height: 10),
                     DropdownButtonFormField<String>(
                       initialValue: selectedPaymentMode,
-                      decoration: const InputDecoration(labelText: 'Payment mode'),
+                      decoration: const InputDecoration(
+                        labelText: 'Payment mode',
+                      ),
                       items: ExpenseOptions.paymentModes
                           .map(
                             (item) => DropdownMenuItem<String>(
@@ -246,7 +210,17 @@ class _MonthlyOverviewScreenState extends State<MonthlyOverviewScreen>
                     );
                     if (parsedAmount == null || parsedAmount <= 0) {
                       ScaffoldMessenger.of(this.context).showSnackBar(
-                        const SnackBar(content: Text('Please enter a valid amount')),
+                        const SnackBar(
+                          content: Text('Please enter a valid amount'),
+                        ),
+                      );
+                      return;
+                    }
+                    if (selectedCategory.trim().isEmpty) {
+                      ScaffoldMessenger.of(this.context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Please choose a valid category'),
+                        ),
                       );
                       return;
                     }
@@ -254,7 +228,9 @@ class _MonthlyOverviewScreenState extends State<MonthlyOverviewScreen>
                     final parsedDate = _parseDate(dateController.text);
                     if (parsedDate == null) {
                       ScaffoldMessenger.of(this.context).showSnackBar(
-                        const SnackBar(content: Text('Please enter a valid date')),
+                        const SnackBar(
+                          content: Text('Please enter a valid date'),
+                        ),
                       );
                       return;
                     }
@@ -303,16 +279,18 @@ class _MonthlyOverviewScreenState extends State<MonthlyOverviewScreen>
     if (updatedExpense == null) return;
 
     try {
-      await _repo.updateExpense(updatedExpense);
+      await ref
+          .read(monthlyExpenseControllerProvider)
+          .updateExpense(updatedExpense);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Expense updated')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Expense updated')));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Update failed: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Update failed: $e')));
     }
   }
 
@@ -325,7 +303,9 @@ class _MonthlyOverviewScreenState extends State<MonthlyOverviewScreen>
       builder: (context) {
         return AlertDialog(
           title: const Text('Delete expense'),
-          content: Text('Delete "${expense.merchant}" (${_money(expense.amount)})?'),
+          content: Text(
+            'Delete "${expense.merchant}" (${_money(expense.amount)})?',
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
@@ -343,21 +323,61 @@ class _MonthlyOverviewScreenState extends State<MonthlyOverviewScreen>
     if (confirmed != true) return;
 
     try {
-      await _repo.deleteExpense(id);
+      await ref.read(monthlyExpenseControllerProvider).deleteExpense(id);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Expense deleted')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Expense deleted')));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Delete failed: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Delete failed: $e')));
     }
   }
 
-  Widget _buildSummaryTab() {
+  Widget _buildSummaryTab({
+    required bool loading,
+    required MonthlyOverviewData monthlyData,
+    String? errorText,
+  }) {
     final cs = Theme.of(context).colorScheme;
+
+    if (errorText != null && !loading) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md,
+          0,
+          AppSpacing.md,
+          AppSpacing.xl,
+        ),
+        children: [
+          Glass(
+            child: Column(
+              children: [
+                Icon(Icons.error_outline_rounded, color: cs.error, size: 28),
+                const SizedBox(height: 10),
+                Text(
+                  errorText,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: cs.error,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: _refreshCurrentMonth,
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: const Text('Retry'),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
 
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
@@ -369,23 +389,27 @@ class _MonthlyOverviewScreenState extends State<MonthlyOverviewScreen>
       ),
       children: [
         Glass(
-          child: _loading
+          child: loading
               ? const Padding(
                   padding: EdgeInsets.symmetric(vertical: 26),
-                  child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                  child: Center(
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
                 )
               : Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       'By category',
-                      style: Theme.of(
-                        context,
-                      ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
                     const SizedBox(height: 14),
-                    ..._categoryTotals.map((item) {
-                      final pct = _total <= 0 ? 0.0 : item.total / _total;
+                    ...monthlyData.categoryTotals.map((item) {
+                      final pct = monthlyData.total <= 0
+                          ? 0.0
+                          : item.total / monthlyData.total;
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 12),
                         child: Column(
@@ -419,11 +443,12 @@ class _MonthlyOverviewScreenState extends State<MonthlyOverviewScreen>
                               child: LinearProgressIndicator(
                                 value: pct,
                                 minHeight: 8,
-                                backgroundColor: cs.surfaceContainerHighest.withValues(
-                                  alpha: 0.45,
-                                ),
+                                backgroundColor: cs.surfaceContainerHighest
+                                    .withValues(alpha: 0.45),
                                 valueColor: AlwaysStoppedAnimation<Color>(
-                                  item.total > 0 ? cs.primary : cs.outlineVariant,
+                                  item.total > 0
+                                      ? cs.primary
+                                      : cs.outlineVariant,
                                 ),
                               ),
                             ),
@@ -438,10 +463,50 @@ class _MonthlyOverviewScreenState extends State<MonthlyOverviewScreen>
     );
   }
 
-  Widget _buildExpensesTab() {
+  Widget _buildExpensesTab({
+    required bool loading,
+    required MonthlyOverviewData monthlyData,
+    String? errorText,
+  }) {
     final cs = Theme.of(context).colorScheme;
 
-    if (_loading) {
+    if (errorText != null && !loading) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md,
+          0,
+          AppSpacing.md,
+          AppSpacing.xl,
+        ),
+        children: [
+          Glass(
+            child: Column(
+              children: [
+                Icon(Icons.error_outline_rounded, color: cs.error, size: 28),
+                const SizedBox(height: 10),
+                Text(
+                  errorText,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: cs.error,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: _refreshCurrentMonth,
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: const Text('Retry'),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    if (loading) {
       return ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(
@@ -457,7 +522,7 @@ class _MonthlyOverviewScreenState extends State<MonthlyOverviewScreen>
       );
     }
 
-    if (_expenses.isEmpty) {
+    if (monthlyData.expenses.isEmpty) {
       return ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(
@@ -501,10 +566,10 @@ class _MonthlyOverviewScreenState extends State<MonthlyOverviewScreen>
         AppSpacing.md,
         AppSpacing.xl,
       ),
-      itemCount: _expenses.length,
+      itemCount: monthlyData.expenses.length,
       separatorBuilder: (context, index) => const SizedBox(height: 12),
       itemBuilder: (_, index) {
-        final item = _expenses[index];
+        final item = monthlyData.expenses[index];
         return Glass(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -515,9 +580,9 @@ class _MonthlyOverviewScreenState extends State<MonthlyOverviewScreen>
                   Expanded(
                     child: Text(
                       item.merchant,
-                      style: Theme.of(
-                        context,
-                      ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -527,25 +592,6 @@ class _MonthlyOverviewScreenState extends State<MonthlyOverviewScreen>
                       fontWeight: FontWeight.w900,
                       color: cs.primary,
                     ),
-                  ),
-                  PopupMenuButton<String>(
-                    onSelected: (value) {
-                      if (value == 'edit') {
-                        _editExpense(item);
-                      } else if (value == 'delete') {
-                        _deleteExpense(item);
-                      }
-                    },
-                    itemBuilder: (context) => const [
-                      PopupMenuItem<String>(
-                        value: 'edit',
-                        child: Text('Edit'),
-                      ),
-                      PopupMenuItem<String>(
-                        value: 'delete',
-                        child: Text('Delete'),
-                      ),
-                    ],
                   ),
                 ],
               ),
@@ -566,6 +612,26 @@ class _MonthlyOverviewScreenState extends State<MonthlyOverviewScreen>
                   _Tag(label: item.paymentMode),
                 ],
               ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      _editExpense(item);
+                    },
+                    icon: const Icon(Icons.edit_rounded, size: 18),
+                    label: const Text('Edit'),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      _deleteExpense(item);
+                    },
+                    icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                    label: const Text('Delete'),
+                  ),
+                ],
+              ),
             ],
           ),
         );
@@ -575,6 +641,13 @@ class _MonthlyOverviewScreenState extends State<MonthlyOverviewScreen>
 
   @override
   Widget build(BuildContext context) {
+    final monthlyAsync = ref.watch(monthlyOverviewProvider(_month));
+    final monthlyData = monthlyAsync.valueOrNull ?? MonthlyOverviewData.empty;
+    final loading = monthlyAsync.isLoading;
+    final monthlyError = monthlyAsync.hasError
+        ? 'Could not load monthly data for this period.'
+        : null;
+
     final cs = Theme.of(context).colorScheme;
     final monthLabel = _monthLabelFormatter.format(_month);
 
@@ -631,18 +704,19 @@ class _MonthlyOverviewScreenState extends State<MonthlyOverviewScreen>
                                   const SizedBox(width: 8),
                                   Text(
                                     monthLabel,
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.titleLarge?.copyWith(
-                                      fontWeight: FontWeight.w900,
-                                    ),
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleLarge
+                                        ?.copyWith(fontWeight: FontWeight.w900),
                                   ),
                                 ],
                               ),
                             ),
                           ),
                           IconButton(
-                            onPressed: _canGoNextMonth ? () => _changeMonth(1) : null,
+                            onPressed: _canGoNextMonth
+                                ? () => _changeMonth(1)
+                                : null,
                             icon: const Icon(Icons.chevron_right_rounded),
                             tooltip: 'Next month',
                           ),
@@ -655,12 +729,12 @@ class _MonthlyOverviewScreenState extends State<MonthlyOverviewScreen>
                         children: [
                           _MetricPill(
                             label: 'Total spend',
-                            value: _money(_total),
+                            value: _money(monthlyData.total),
                             icon: Icons.payments_rounded,
                           ),
                           _MetricPill(
                             label: 'Expenses',
-                            value: '${_expenses.length}',
+                            value: '${monthlyData.expenses.length}',
                             icon: Icons.receipt_long_rounded,
                           ),
                         ],
@@ -700,12 +774,20 @@ class _MonthlyOverviewScreenState extends State<MonthlyOverviewScreen>
               controller: _tabController,
               children: [
                 RefreshIndicator(
-                  onRefresh: _load,
-                  child: _buildSummaryTab(),
+                  onRefresh: _refreshCurrentMonth,
+                  child: _buildSummaryTab(
+                    loading: loading,
+                    monthlyData: monthlyData,
+                    errorText: monthlyError,
+                  ),
                 ),
                 RefreshIndicator(
-                  onRefresh: _load,
-                  child: _buildExpensesTab(),
+                  onRefresh: _refreshCurrentMonth,
+                  child: _buildExpensesTab(
+                    loading: loading,
+                    monthlyData: monthlyData,
+                    errorText: monthlyError,
+                  ),
                 ),
               ],
             ),
@@ -736,9 +818,7 @@ class _MetricPill extends StatelessWidget {
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(14),
         color: cs.surface.withValues(alpha: 0.55),
-        border: Border.all(
-          color: cs.outlineVariant.withValues(alpha: 0.30),
-        ),
+        border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.30)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -786,9 +866,7 @@ class _Tag extends StatelessWidget {
       decoration: BoxDecoration(
         color: cs.surfaceContainerHighest.withValues(alpha: 0.45),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: cs.outlineVariant.withValues(alpha: 0.35),
-        ),
+        border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.35)),
       ),
       child: Text(
         label,

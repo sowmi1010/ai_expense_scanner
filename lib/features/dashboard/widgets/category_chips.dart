@@ -1,78 +1,33 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../../../core/constants/app_strings.dart';
 import '../../../core/constants/expense_options.dart';
 import '../../../core/ui/glass.dart';
 import '../../../data/repositories/expense_repository.dart';
+import '../../../state/providers/expense_providers.dart';
 
-class CategoryChips extends StatefulWidget {
+class CategoryChips extends ConsumerWidget {
   const CategoryChips({super.key});
 
   @override
-  State<CategoryChips> createState() => _CategoryChipsState();
-}
-
-class _CategoryChipsState extends State<CategoryChips> {
-  final _repo = ExpenseRepository.instance;
-
-  bool _loading = true;
-  List<CategoryTotal> _cats = const [];
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-    _repo.changes.addListener(_load);
-  }
-
-  @override
-  void dispose() {
-    _repo.changes.removeListener(_load);
-    super.dispose();
-  }
-
-  DateTime _startOfMonth() {
-    final now = DateTime.now();
-    return DateTime(now.year, now.month, 1);
-  }
-
-  DateTime _startOfNextMonth() {
-    final now = DateTime.now();
-    return DateTime(now.year, now.month + 1, 1);
-  }
-
-  Future<void> _load() async {
-    if (!mounted) return;
-    setState(() => _loading = true);
-
-    try {
-      final data = await _repo.getCategoryTotals(
-        _startOfMonth(),
-        _startOfNextMonth(),
-      );
-      if (!mounted) return;
-      setState(() {
-        _cats = data;
-        _loading = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _loading = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final cs = Theme.of(context).colorScheme;
+    final categoriesAsync = ref.watch(currentMonthCategoryTotalsProvider);
+    final cats = categoriesAsync.valueOrNull ?? const <CategoryTotal>[];
+    final loading = categoriesAsync.isLoading;
+    final hasError = categoriesAsync.hasError;
+
     final money = NumberFormat.currency(
       locale: 'en_IN',
       symbol: 'Rs ',
       decimalDigits: 0,
     );
 
-    final total = _cats.fold<double>(0, (sum, e) => sum + e.total);
-    final show = _cats.take(5).toList();
+    final total = cats.fold<double>(0, (sum, e) => sum + e.total);
+    final show = cats.take(5).toList();
 
     final colors = [
       cs.primary,
@@ -123,7 +78,7 @@ class _CategoryChipsState extends State<CategoryChips> {
           Row(
             children: [
               Text(
-                'Categories',
+                AppStrings.dashboardCategoriesTitle,
                 style: Theme.of(
                   context,
                 ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
@@ -155,11 +110,39 @@ class _CategoryChipsState extends State<CategoryChips> {
               ),
             ),
             padding: const EdgeInsets.all(12),
-            child: _loading
+            child: loading
                 ? const SizedBox(
                     height: 150,
                     child: Center(
                       child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                : hasError
+                ? SizedBox(
+                    height: 150,
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.error_outline_rounded, color: cs.error),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Could not load categories',
+                            style: TextStyle(
+                              color: cs.error,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          OutlinedButton.icon(
+                            onPressed: () => ref.invalidate(
+                              currentMonthCategoryTotalsProvider,
+                            ),
+                            icon: const Icon(Icons.refresh_rounded),
+                            label: const Text('Retry'),
+                          ),
+                        ],
+                      ),
                     ),
                   )
                 : Row(
@@ -181,7 +164,9 @@ class _CategoryChipsState extends State<CategoryChips> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              total <= 0 ? 'No spending yet' : money.format(total),
+                              total <= 0
+                                  ? 'No spending yet'
+                                  : money.format(total),
                               style: TextStyle(
                                 fontSize: 18,
                                 fontWeight: FontWeight.w900,
@@ -200,7 +185,9 @@ class _CategoryChipsState extends State<CategoryChips> {
                             ...show.asMap().entries.map((entry) {
                               final i = entry.key;
                               final cat = entry.value;
-                              final pct = total <= 0 ? 0 : (cat.total / total) * 100;
+                              final pct = total <= 0
+                                  ? 0
+                                  : (cat.total / total) * 100;
                               final color = colors[i % colors.length];
 
                               return Padding(
@@ -245,43 +232,44 @@ class _CategoryChipsState extends State<CategoryChips> {
                   ),
           ),
           const SizedBox(height: 12),
-          if (!_loading)
+          if (!loading && !hasError)
             Wrap(
               spacing: 10,
               runSpacing: 10,
-              children: (show.isEmpty
-                      ? ExpenseOptions.categories
-                      : show.map((e) => e.category))
-                  .map((name) {
-                    return Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(999),
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            cs.primary.withValues(alpha: 0.16),
-                            cs.tertiary.withValues(alpha: 0.12),
-                          ],
-                        ),
-                        border: Border.all(
-                          color: cs.primary.withValues(alpha: 0.24),
-                        ),
-                      ),
-                      child: Text(
-                        name,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w800,
-                          color: cs.primary,
-                        ),
-                      ),
-                    );
-                  })
-                  .toList(),
+              children:
+                  (show.isEmpty
+                          ? ExpenseOptions.categories
+                          : show.map((e) => e.category))
+                      .map((name) {
+                        return Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(999),
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                cs.primary.withValues(alpha: 0.16),
+                                cs.tertiary.withValues(alpha: 0.12),
+                              ],
+                            ),
+                            border: Border.all(
+                              color: cs.primary.withValues(alpha: 0.24),
+                            ),
+                          ),
+                          child: Text(
+                            name,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              color: cs.primary,
+                            ),
+                          ),
+                        );
+                      })
+                      .toList(),
             ),
         ],
       ),

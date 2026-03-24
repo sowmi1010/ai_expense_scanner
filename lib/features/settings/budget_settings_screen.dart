@@ -1,18 +1,25 @@
 import 'package:flutter/material.dart';
-import '../../core/services/budget_service.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../core/ui/app_spacing.dart';
 import '../../core/ui/glass.dart';
+import '../../state/controllers/budget_settings_controller.dart';
 
-class BudgetSettingsScreen extends StatefulWidget {
+class BudgetSettingsScreen extends ConsumerStatefulWidget {
   const BudgetSettingsScreen({super.key});
 
   @override
-  State<BudgetSettingsScreen> createState() => _BudgetSettingsScreenState();
+  ConsumerState<BudgetSettingsScreen> createState() =>
+      _BudgetSettingsScreenState();
 }
 
-class _BudgetSettingsScreenState extends State<BudgetSettingsScreen> {
+class _BudgetSettingsScreenState extends ConsumerState<BudgetSettingsScreen> {
   final _budget = TextEditingController();
   bool _loading = true;
+  bool _saving = false;
+  String? _loadError;
+
+  bool get _busy => _loading || _saving;
 
   @override
   void initState() {
@@ -27,28 +34,61 @@ class _BudgetSettingsScreenState extends State<BudgetSettingsScreen> {
   }
 
   Future<void> _load() async {
-    final v = await BudgetService.instance.getMonthlyBudget();
-    _budget.text = v <= 0 ? '' : v.toStringAsFixed(0);
-    if (mounted) setState(() => _loading = false);
+    setState(() {
+      _loading = true;
+      _loadError = null;
+    });
+
+    try {
+      final value = await ref
+          .read(budgetSettingsControllerProvider)
+          .getMonthlyBudget();
+      _budget.text = value <= 0 ? '' : value.toStringAsFixed(0);
+      if (!mounted) return;
+      setState(() => _loading = false);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _loadError = 'Could not load saved budget.';
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to load budget: $e')));
+    }
   }
 
   Future<void> _save() async {
+    if (_saving) return;
+
     final cleaned = _budget.text.replaceAll(',', '').trim();
-    final v = double.tryParse(cleaned) ?? 0;
+    final value = double.tryParse(cleaned) ?? 0;
 
-    await BudgetService.instance.setMonthlyBudget(v);
+    try {
+      setState(() => _saving = true);
+      await ref.read(budgetSettingsControllerProvider).setMonthlyBudget(value);
 
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          v <= 0
-              ? 'Budget cleared'
-              : 'Monthly budget set to ₹${v.toStringAsFixed(0)}',
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            value <= 0
+                ? 'Budget cleared'
+                : 'Monthly budget set to Rs ${value.toStringAsFixed(0)}',
+          ),
         ),
-      ),
-    );
-    Navigator.pop(context);
+      );
+      Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to save budget: $e')));
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
+      }
+    }
   }
 
   @override
@@ -79,30 +119,50 @@ class _BudgetSettingsScreenState extends State<BudgetSettingsScreen> {
                       fontWeight: FontWeight.w600,
                     ),
                   ),
+                  if (_loadError != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      _loadError!,
+                      style: TextStyle(
+                        color: cs.error,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      onPressed: _load,
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: const Text('Retry'),
+                    ),
+                  ],
                   const SizedBox(height: 14),
-
                   TextField(
                     controller: _budget,
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(
-                      labelText: 'Budget (₹)',
+                      labelText: 'Budget (Rs)',
                       hintText: 'e.g. 10000',
                     ),
-                    enabled: !_loading,
+                    enabled: !_busy,
                   ),
-
                   const SizedBox(height: 16),
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton(
-                      onPressed: _loading ? null : _save,
+                      onPressed: _busy ? null : _save,
                       style: FilledButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(18),
                         ),
                       ),
-                      child: const Text('Save budget'),
+                      child: _saving
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Save budget'),
                     ),
                   ),
                 ],

@@ -1,98 +1,24 @@
-import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
+import 'dart:async';
 
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../core/constants/app_strings.dart';
 import '../../core/ui/app_spacing.dart';
 import '../../core/ui/glass.dart';
-import '../../data/repositories/expense_repository.dart';
 import '../../routes/app_routes.dart';
+import '../../state/controllers/dashboard_controller.dart';
 import 'widgets/category_chips.dart';
 import 'widgets/insight_card.dart';
 import 'widgets/quick_action.dart';
 import 'widgets/spend_line_card.dart';
 
-class DashboardScreen extends StatefulWidget {
+class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
 
   @override
-  State<DashboardScreen> createState() => _DashboardScreenState();
-}
-
-class _DashboardScreenState extends State<DashboardScreen> {
-  final _repo = ExpenseRepository.instance;
-
-  bool _loading = true;
-  double _todayTotal = 0;
-  int _todayCount = 0;
-  double _monthTotal = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadStats();
-    _repo.changes.addListener(_loadStats);
-  }
-
-  @override
-  void dispose() {
-    _repo.changes.removeListener(_loadStats);
-    super.dispose();
-  }
-
-  String _money(double value) {
-    final formatter = NumberFormat.currency(
-      locale: 'en_IN',
-      symbol: 'Rs ',
-      decimalDigits: 0,
-    );
-    return formatter.format(value);
-  }
-
-  DateTime _startOfToday() {
-    final now = DateTime.now();
-    return DateTime(now.year, now.month, now.day);
-  }
-
-  DateTime _startOfTomorrow() => _startOfToday().add(const Duration(days: 1));
-
-  DateTime _startOfMonth() {
-    final now = DateTime.now();
-    return DateTime(now.year, now.month, 1);
-  }
-
-  DateTime _startOfNextMonth() {
-    final now = DateTime.now();
-    return DateTime(now.year, now.month + 1, 1);
-  }
-
-  Future<void> _loadStats() async {
-    if (!mounted) return;
-    setState(() => _loading = true);
-
-    try {
-      final todayStart = _startOfToday();
-      final tomorrowStart = _startOfTomorrow();
-      final monthStart = _startOfMonth();
-      final nextMonthStart = _startOfNextMonth();
-
-      final todayTotal = await _repo.sumByDateRange(todayStart, tomorrowStart);
-      final todayCount = await _repo.countByDateRange(todayStart, tomorrowStart);
-      final monthTotal = await _repo.sumByDateRange(monthStart, nextMonthStart);
-
-      if (!mounted) return;
-      setState(() {
-        _todayTotal = todayTotal;
-        _todayCount = todayCount;
-        _monthTotal = monthTotal;
-        _loading = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _loading = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final controller = ref.read(dashboardControllerProvider);
     final cs = Theme.of(context).colorScheme;
 
     return SafeArea(
@@ -102,19 +28,34 @@ class _DashboardScreenState extends State<DashboardScreen> {
             pinned: true,
             expandedHeight: 108,
             backgroundColor: Colors.transparent,
-            title: const Text('Expense Radar'),
+            title: const Text(AppStrings.dashboardTitle),
             actions: [
-              IconButton(
-                onPressed: _loadStats,
-                icon: Icon(Icons.refresh_rounded, color: cs.onSurface),
-                tooltip: 'Refresh',
+              ValueListenableBuilder<bool>(
+                valueListenable: controller.isRefreshing,
+                builder: (context, refreshing, _) {
+                  return IconButton(
+                    onPressed: refreshing
+                        ? null
+                        : () {
+                            unawaited(controller.refreshDashboardData());
+                          },
+                    icon: refreshing
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Icon(Icons.refresh_rounded, color: cs.onSurface),
+                    tooltip: AppStrings.dashboardRefreshTooltip,
+                  );
+                },
               ),
               IconButton(
                 onPressed: () {
-                  Navigator.pushNamed(context, AppRoutes.voice);
+                  AppRoutes.toVoice(context);
                 },
                 icon: Icon(Icons.keyboard_voice_rounded, color: cs.onSurface),
-                tooltip: 'Voice',
+                tooltip: AppStrings.dashboardVoiceTooltip,
               ),
               const SizedBox(width: 6),
             ],
@@ -125,14 +66,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 AppSpacing.md,
                 0,
               ),
-              child: Text(
-                _loading
-                    ? 'Updating today and monthly totals...'
-                    : 'Smarter tracking for calmer spending.',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: cs.onSurfaceVariant,
-                  fontWeight: FontWeight.w600,
-                ),
+              child: Consumer(
+                builder: (context, ref, _) {
+                  final subtitle = ref.watch(
+                    dashboardViewModelProvider.select(
+                      (vm) => vm.flexibleSubtitle,
+                    ),
+                  );
+                  final statsError = ref.watch(
+                    dashboardViewModelProvider.select((vm) => vm.errorMessage),
+                  );
+
+                  return Text(
+                    subtitle,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: statsError != null
+                          ? cs.error
+                          : cs.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  );
+                },
               ),
             ),
           ),
@@ -140,49 +94,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
             padding: const EdgeInsets.all(AppSpacing.md),
             sliver: SliverList(
               delegate: SliverChildListDelegate([
-                _HeroSummary(
-                  loading: _loading,
-                  todayTotal: _money(_todayTotal),
-                  todayCount: _todayCount,
-                  monthTotal: _money(_monthTotal),
-                ),
+                const _DashboardTopSummary(),
                 const SizedBox(height: AppSpacing.md),
-                Row(
-                  children: [
-                    Expanded(
-                      child: InsightCard(
-                        title: 'Today',
-                        value: _money(_todayTotal),
-                        subtitle: '$_todayCount transactions',
-                        icon: Icons.today_rounded,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: InsightCard(
-                        title: 'This month',
-                        value: _money(_monthTotal),
-                        subtitle: 'Budget: Rs 0',
-                        icon: Icons.calendar_month_rounded,
-                      ),
-                    ),
-                  ],
-                ),
+                const RepaintBoundary(child: SpendLineCard()),
                 const SizedBox(height: AppSpacing.md),
-                const SpendLineCard(),
-                const SizedBox(height: AppSpacing.md),
-                const CategoryChips(),
+                const RepaintBoundary(child: CategoryChips()),
                 const SizedBox(height: AppSpacing.md),
                 Glass(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Quick actions',
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: -0.2,
-                        ),
+                        AppStrings.dashboardQuickActions,
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: -0.2,
+                            ),
                       ),
                       const SizedBox(height: 12),
                       Row(
@@ -193,10 +121,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               title: 'Add expense',
                               subtitle: 'No bill manual',
                               onTap: () {
-                                Navigator.pushNamed(
-                                  context,
-                                  AppRoutes.receiptPreview,
-                                );
+                                AppRoutes.toReceiptPreview(context);
                               },
                             ),
                           ),
@@ -207,7 +132,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               title: 'Scan receipt',
                               subtitle: 'Camera OCR',
                               onTap: () {
-                                Navigator.pushNamed(context, AppRoutes.camera);
+                                AppRoutes.toCamera(context);
                               },
                             ),
                           ),
@@ -222,7 +147,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               title: 'Gallery bill',
                               subtitle: 'Import image',
                               onTap: () {
-                                Navigator.pushNamed(context, AppRoutes.scan);
+                                AppRoutes.toScan(context);
                               },
                             ),
                           ),
@@ -233,7 +158,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               title: 'Voice',
                               subtitle: 'Speak and save',
                               onTap: () {
-                                Navigator.pushNamed(context, AppRoutes.voice);
+                                AppRoutes.toVoice(context);
                               },
                             ),
                           ),
@@ -245,6 +170,96 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 const SizedBox(height: AppSpacing.xl),
               ]),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DashboardTopSummary extends ConsumerWidget {
+  const _DashboardTopSummary();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final vm = ref.watch(dashboardViewModelProvider);
+    final controller = ref.read(dashboardControllerProvider);
+
+    return Column(
+      children: [
+        if (vm.errorMessage != null) ...[
+          _DashboardErrorCard(
+            message: vm.errorMessage!,
+            onRetry: controller.refreshDashboardData,
+          ),
+          const SizedBox(height: AppSpacing.md),
+        ],
+        _HeroSummary(
+          loading: vm.loading,
+          todayTotal: vm.todayTotal,
+          todayCount: vm.todayCount,
+          monthTotal: vm.monthTotal,
+        ),
+        const SizedBox(height: AppSpacing.md),
+        Row(
+          children: [
+            Expanded(
+              child: InsightCard(
+                title: AppStrings.dashboardInsightTitleToday,
+                value: vm.todayTotal,
+                subtitle: '${vm.todayCount} transactions',
+                icon: Icons.today_rounded,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: InsightCard(
+                title: AppStrings.dashboardInsightTitleMonth,
+                value: vm.monthTotal,
+                subtitle: 'Budget: Rs 0',
+                icon: Icons.calendar_month_rounded,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _DashboardErrorCard extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
+
+  const _DashboardErrorCard({required this.message, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Glass(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.error_outline_rounded, color: cs.error),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  message,
+                  style: TextStyle(
+                    color: cs.error,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: onRetry,
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('Retry'),
           ),
         ],
       ),
@@ -283,7 +298,7 @@ class _HeroSummary extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Today at a glance',
+                      AppStrings.dashboardTodayAtAGlance,
                       style: theme.textTheme.titleLarge?.copyWith(
                         fontWeight: FontWeight.w900,
                       ),

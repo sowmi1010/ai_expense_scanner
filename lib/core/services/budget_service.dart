@@ -17,8 +17,7 @@ class BudgetStatus {
 }
 
 class BudgetService {
-  BudgetService._internal();
-  static final BudgetService instance = BudgetService._internal();
+  BudgetService();
 
   static const _kMonthlyBudget = 'monthly_budget';
   static const _kAlert80Key = 'budget_alert_80_month';

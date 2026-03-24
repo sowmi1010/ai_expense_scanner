@@ -1,42 +1,41 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../core/constants/expense_options.dart';
-import '../../core/services/budget_service.dart';
-import '../../core/services/notification_service.dart';
-import '../../core/services/ocr_service.dart';
 import '../../core/ui/app_spacing.dart';
 import '../../core/ui/glass.dart';
 import '../../data/models/expense_model.dart';
-import '../../data/repositories/expense_repository.dart';
-import 'receipt_preview_args.dart';
+import '../../state/controllers/receipt_preview_controller.dart';
 
-class ReceiptPreviewScreen extends StatefulWidget {
-  const ReceiptPreviewScreen({super.key});
+class ReceiptPreviewScreen extends ConsumerStatefulWidget {
+  final String? imagePath;
+
+  const ReceiptPreviewScreen({super.key, this.imagePath});
 
   @override
-  State<ReceiptPreviewScreen> createState() => _ReceiptPreviewScreenState();
+  ConsumerState<ReceiptPreviewScreen> createState() =>
+      _ReceiptPreviewScreenState();
 }
 
-class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
+class _ReceiptPreviewScreenState extends ConsumerState<ReceiptPreviewScreen> {
   final amount = TextEditingController();
   final merchant = TextEditingController();
   final date = TextEditingController();
 
   final _picker = ImagePicker();
-  final _ocr = OcrService();
-  final _repo = ExpenseRepository.instance;
 
   String category = ExpenseOptions.defaultCategory;
   String paymentMode = ExpenseOptions.defaultPaymentMode;
 
   String? _imagePath;
-  bool _initDone = false;
   bool _scanning = false;
   bool _saving = false;
   String _rawText = '';
+  String? _ocrStatusMessage;
 
   // NEW: extracted payment method from OCR (example: "UPI, SuperCoins", "EMI")
   String? _paymentMethod;
@@ -45,6 +44,17 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
   void initState() {
     super.initState();
     date.text = _formatDate(DateTime.now());
+    _imagePath = widget.imagePath;
+    if (kIsWeb) {
+      _ocrStatusMessage =
+          'Auto-detect is currently unavailable on Web. Use Android/iOS for OCR, or fill manually.';
+    }
+
+    if (_imagePath != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _runOcr();
+      });
+    }
   }
 
   @override
@@ -52,23 +62,7 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
     amount.dispose();
     merchant.dispose();
     date.dispose();
-    _ocr.dispose();
     super.dispose();
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-
-    if (_initDone) return;
-    _initDone = true;
-
-    final args = ModalRoute.of(context)?.settings.arguments;
-    _imagePath = (args is ReceiptPreviewArgs) ? args.imagePath : null;
-
-    if (_imagePath != null) {
-      _runOcr();
-    }
   }
 
   String _formatDate(DateTime value) {
@@ -76,6 +70,26 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
     final mm = value.month.toString().padLeft(2, '0');
     final yyyy = value.year.toString();
     return '$dd-$mm-$yyyy';
+  }
+
+  Widget _buildSelectedImage(String imagePath) {
+    if (kIsWeb) {
+      return Image.network(
+        imagePath,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => const Center(
+          child: Text('Could not render selected image on web.'),
+        ),
+      );
+    }
+
+    return Image.file(
+      File(imagePath),
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) => const Center(
+        child: Text('Could not render selected image.'),
+      ),
+    );
   }
 
   Future<void> _pickFromGallery() async {
@@ -97,6 +111,9 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
       await _runOcr();
     } catch (e) {
       if (!mounted) return;
+      setState(() {
+        _ocrStatusMessage = 'Could not import image: $e';
+      });
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Could not import image: $e')));
@@ -109,7 +126,10 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
     setState(() => _scanning = true);
 
     try {
-      final parsed = await _ocr.scanReceiptFromImagePath(_imagePath!);
+      final scanResult = await ref
+          .read(receiptPreviewControllerProvider)
+          .scanReceiptFromImagePath(_imagePath);
+      final parsed = scanResult.parsedReceipt;
 
       _rawText = parsed.rawText;
       _paymentMethod = parsed.paymentMethod;
@@ -140,8 +160,9 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
 
       // Payment mode improved: use both raw text + payment method line
       final paymentHint = [parsed.paymentMethod, parsed.rawText]
-          .where((e) => e != null && e!.trim().isNotEmpty)
-          .map((e) => e!.trim())
+          .whereType<String>()
+          .where((e) => e.trim().isNotEmpty)
+          .map((e) => e.trim())
           .join('\n');
 
       paymentMode = ExpenseOptions.detectPaymentModeFromText(paymentHint);
@@ -150,8 +171,24 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
       }
 
       if (mounted) setState(() {});
+
+      if (scanResult.message != null && mounted) {
+        setState(() {
+          _ocrStatusMessage = scanResult.message;
+        });
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(scanResult.message!)));
+      } else if (mounted) {
+        setState(() {
+          _ocrStatusMessage = null;
+        });
+      }
     } catch (e) {
       if (mounted) {
+        setState(() {
+          _ocrStatusMessage = 'OCR failed. Please enter details manually.';
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('OCR failed, please enter manually: $e')),
         );
@@ -177,8 +214,9 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
   DateTime? _parseDate(String value) {
     final text = value.trim().toLowerCase();
     if (text.isEmpty || text == 'today') return DateTime.now();
-    if (text == 'yesterday')
+    if (text == 'yesterday') {
       return DateTime.now().subtract(const Duration(days: 1));
+    }
 
     final dmy = RegExp(r'^(\d{1,2})[\/\.\-](\d{1,2})[\/\.\-](\d{2,4})$');
     final ymd = RegExp(r'^(\d{4})[\/\.\-](\d{1,2})[\/\.\-](\d{1,2})$');
@@ -211,61 +249,6 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
     }
   }
 
-  DateTime _startOfMonth(DateTime now) => DateTime(now.year, now.month, 1);
-  DateTime _startOfNextMonth(DateTime now) =>
-      DateTime(now.year, now.month + 1, 1);
-
-  Future<void> _checkBudgetAndNotify() async {
-    final budget = await BudgetService.instance.getMonthlyBudget();
-    if (budget <= 0) return;
-
-    await BudgetService.instance.resetMonthIfNeeded();
-
-    final now = DateTime.now();
-    final spent = await _repo.sumByDateRange(
-      _startOfMonth(now),
-      _startOfNextMonth(now),
-    );
-    final percent = (spent / budget) * 100;
-
-    if (percent >= 100) {
-      final already = await BudgetService.instance.hasTriggered100ThisMonth();
-      if (!already) {
-        await BudgetService.instance.markTriggered100ThisMonth();
-        final msg =
-            'Budget exceeded: ${spent.toStringAsFixed(0)} / ${budget.toStringAsFixed(0)}';
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(msg)));
-        }
-        await NotificationService.instance.showBudgetAlert(
-          title: 'Monthly budget exceeded',
-          body: msg,
-        );
-      }
-      return;
-    }
-
-    if (percent >= 80) {
-      final already = await BudgetService.instance.hasTriggered80ThisMonth();
-      if (!already) {
-        await BudgetService.instance.markTriggered80ThisMonth();
-        final msg =
-            'You reached ${percent.toStringAsFixed(0)}%: ${spent.toStringAsFixed(0)} / ${budget.toStringAsFixed(0)}';
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(msg)));
-        }
-        await NotificationService.instance.showBudgetAlert(
-          title: 'Budget warning (80%)',
-          body: msg,
-        );
-      }
-    }
-  }
-
   Future<void> _saveExpense() async {
     if (_saving) return;
 
@@ -273,6 +256,13 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
     if (amt == null || amt <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please enter a valid amount')),
+      );
+      return;
+    }
+    if (category.trim().isEmpty ||
+        !ExpenseOptions.categories.contains(category)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please choose a valid category')),
       );
       return;
     }
@@ -315,14 +305,18 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
         rawOcrText: _rawText.isEmpty ? null : _rawText,
       );
 
-      await _repo.insertExpense(expense);
-      await _checkBudgetAndNotify();
+      final budgetFeedback = await ref
+          .read(receiptPreviewControllerProvider)
+          .saveExpenseAndCheckBudget(expense);
 
       if (!mounted) return;
 
+      final message = budgetFeedback == null
+          ? 'Expense saved'
+          : 'Expense saved. ${budgetFeedback.message}';
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('Expense saved')));
+      ).showSnackBar(SnackBar(content: Text(message)));
       Navigator.pop(context);
     } catch (e) {
       if (!mounted) return;
@@ -348,9 +342,11 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
             tooltip: 'Pick image',
           ),
           IconButton(
-            onPressed: (_scanning || _saving) ? null : _runOcr,
+            onPressed: (_scanning || _saving || kIsWeb) ? null : _runOcr,
             icon: const Icon(Icons.auto_fix_high_rounded),
-            tooltip: 'Auto-detect',
+            tooltip: kIsWeb
+                ? 'Auto-detect unavailable on Web'
+                : 'Auto-detect',
           ),
           const SizedBox(width: 6),
         ],
@@ -410,10 +406,7 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
                         : Stack(
                             children: [
                               Positioned.fill(
-                                child: Image.file(
-                                  File(_imagePath!),
-                                  fit: BoxFit.cover,
-                                ),
+                                child: _buildSelectedImage(_imagePath!),
                               ),
                               if (_scanning)
                                 Positioned.fill(
@@ -427,6 +420,29 @@ class _ReceiptPreviewScreenState extends State<ReceiptPreviewScreen> {
                             ],
                           ),
                   ),
+                  if (_ocrStatusMessage != null) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        color: cs.surfaceContainerHighest.withValues(
+                          alpha: 0.45,
+                        ),
+                        border: Border.all(
+                          color: cs.outlineVariant.withValues(alpha: 0.30),
+                        ),
+                      ),
+                      child: Text(
+                        _ocrStatusMessage!,
+                        style: TextStyle(
+                          color: cs.onSurfaceVariant,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
 
                   const SizedBox(height: 14),
 

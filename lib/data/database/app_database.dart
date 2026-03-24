@@ -2,11 +2,13 @@ import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
 class AppDatabase {
-  static final AppDatabase instance = AppDatabase._internal();
-  AppDatabase._internal();
+  static const defaultDbName = 'expense_ai.db';
+  static const defaultDbVersion = 2;
 
-  static const _dbName = 'expense_ai.db';
-  static const _dbVersion = 2;
+  final String dbName;
+  final int dbVersion;
+
+  AppDatabase({this.dbName = defaultDbName, this.dbVersion = defaultDbVersion});
 
   Database? _db;
 
@@ -18,11 +20,11 @@ class AppDatabase {
 
   Future<Database> _open() async {
     final dbPath = await getDatabasesPath();
-    final path = p.join(dbPath, _dbName);
+    final path = p.join(dbPath, dbName);
 
     return openDatabase(
       path,
-      version: _dbVersion,
+      version: dbVersion,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE expenses (

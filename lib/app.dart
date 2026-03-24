@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'core/theme/app_theme.dart';
-import 'routes/app_routes.dart';
+import 'features/shell/shell_screen.dart';
 
 class ExpenseScannerApp extends StatelessWidget {
   const ExpenseScannerApp({super.key});
@@ -26,8 +26,7 @@ class ExpenseScannerApp extends StatelessWidget {
           child: child ?? const SizedBox.shrink(),
         );
       },
-      onGenerateRoute: AppRoutes.onGenerateRoute,
-      initialRoute: AppRoutes.shell,
+      home: const ShellScreen(),
     );
   }
 }

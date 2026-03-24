@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import '../../core/ui/app_spacing.dart';
 import '../../core/ui/glass.dart';
 import '../../routes/app_routes.dart';
-import 'receipt_preview_args.dart';
 
 class ReceiptCameraScreen extends StatefulWidget {
   const ReceiptCameraScreen({super.key});
@@ -21,6 +20,7 @@ class _ReceiptCameraScreenState extends State<ReceiptCameraScreen>
   bool _capturing = false;
   int _cameraIndex = 0;
   FlashMode _flash = FlashMode.off;
+  String? _cameraError;
 
   @override
   void initState() {
@@ -49,15 +49,17 @@ class _ReceiptCameraScreenState extends State<ReceiptCameraScreen>
   }
 
   Future<void> _initCamera() async {
-    setState(() => _initializing = true);
+    setState(() {
+      _initializing = true;
+      _cameraError = null;
+    });
 
     try {
       _cameras = await availableCameras();
       if (_cameras.isEmpty) {
+        _cameraError = 'No camera found on this device.';
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('No camera found on this device')),
-          );
+          _showCameraFallbackMessage(_cameraError!);
         }
         setState(() => _initializing = false);
         return;
@@ -84,11 +86,10 @@ class _ReceiptCameraScreenState extends State<ReceiptCameraScreen>
 
       if (mounted) setState(() => _initializing = false);
     } catch (e) {
+      _cameraError = 'Camera init failed.';
       if (mounted) {
         setState(() => _initializing = false);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Camera init failed: $e')));
+        _showCameraFallbackMessage('Camera init failed: $e');
       }
     }
   }
@@ -115,7 +116,12 @@ class _ReceiptCameraScreenState extends State<ReceiptCameraScreen>
     try {
       await c.setFlashMode(next);
       setState(() => _flash = next);
-    } catch (_) {}
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Flash update failed: $e')));
+    }
   }
 
   Future<void> _switchCamera() async {
@@ -142,11 +148,10 @@ class _ReceiptCameraScreenState extends State<ReceiptCameraScreen>
 
       if (mounted) setState(() => _initializing = false);
     } catch (e) {
+      _cameraError = 'Switch camera failed.';
       if (mounted) {
         setState(() => _initializing = false);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Switch camera failed: $e')));
+        _showCameraFallbackMessage('Switch camera failed: $e');
       }
     }
   }
@@ -164,6 +169,22 @@ class _ReceiptCameraScreenState extends State<ReceiptCameraScreen>
     }
   }
 
+  void _showCameraFallbackMessage(String message) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        action: SnackBarAction(
+          label: 'Manual entry',
+          onPressed: () {
+            AppRoutes.toReceiptPreview(context);
+          },
+        ),
+      ),
+    );
+  }
+
   Future<void> _capture() async {
     final c = _controller;
     if (c == null || !c.value.isInitialized || _capturing) return;
@@ -179,16 +200,11 @@ class _ReceiptCameraScreenState extends State<ReceiptCameraScreen>
       if (!mounted) return;
 
       // Navigate to preview screen with file path
-      Navigator.pushNamed(
-        context,
-        AppRoutes.receiptPreview,
-        arguments: ReceiptPreviewArgs(imagePath: file.path),
-      );
+      AppRoutes.toReceiptPreview(context, imagePath: file.path);
     } catch (e) {
+      _cameraError = 'Capture failed.';
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Capture failed: $e')));
+        _showCameraFallbackMessage('Capture failed: $e');
       }
     } finally {
       if (mounted) setState(() => _capturing = false);
@@ -209,9 +225,28 @@ class _ReceiptCameraScreenState extends State<ReceiptCameraScreen>
                   ? const Center(child: CircularProgressIndicator())
                   : (_controller == null || !_controller!.value.isInitialized)
                   ? Center(
-                      child: Text(
-                        'Camera not ready',
-                        style: TextStyle(color: cs.onSurface),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            _cameraError ?? 'Camera not ready',
+                            style: TextStyle(color: cs.onSurface),
+                          ),
+                          const SizedBox(height: 12),
+                          OutlinedButton.icon(
+                            onPressed: _initCamera,
+                            icon: const Icon(Icons.refresh_rounded),
+                            label: const Text('Retry'),
+                          ),
+                          const SizedBox(height: 8),
+                          FilledButton.tonalIcon(
+                            onPressed: () {
+                              AppRoutes.toReceiptPreview(context);
+                            },
+                            icon: const Icon(Icons.edit_note_rounded),
+                            label: const Text('Enter manually'),
+                          ),
+                        ],
                       ),
                     )
                   : CameraPreview(_controller!),
