@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'core/theme/app_theme.dart';
-import 'features/shell/shell_screen.dart';
+import 'features/auth/auth_gate_screen.dart';
 
 class ExpenseScannerApp extends StatelessWidget {
   const ExpenseScannerApp({super.key});
@@ -26,7 +26,7 @@ class ExpenseScannerApp extends StatelessWidget {
           child: child ?? const SizedBox.shrink(),
         );
       },
-      home: const ShellScreen(),
+      home: const AuthGateScreen(),
     );
   }
 }

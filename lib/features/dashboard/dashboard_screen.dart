@@ -14,7 +14,22 @@ import 'widgets/quick_action.dart';
 import 'widgets/spend_line_card.dart';
 
 class DashboardScreen extends ConsumerWidget {
-  const DashboardScreen({super.key});
+  final String? userName;
+  final VoidCallback? onLogout;
+
+  const DashboardScreen({
+    super.key,
+    this.userName,
+    this.onLogout,
+  });
+
+  String _titleText() {
+    final trimmedName = userName?.trim();
+    if (trimmedName == null || trimmedName.isEmpty) {
+      return AppStrings.dashboardTitle;
+    }
+    return 'Welcome, $trimmedName';
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -28,7 +43,7 @@ class DashboardScreen extends ConsumerWidget {
             pinned: true,
             expandedHeight: 108,
             backgroundColor: Colors.transparent,
-            title: const Text(AppStrings.dashboardTitle),
+            title: Text(_titleText()),
             actions: [
               ValueListenableBuilder<bool>(
                 valueListenable: controller.isRefreshing,
@@ -57,6 +72,12 @@ class DashboardScreen extends ConsumerWidget {
                 icon: Icon(Icons.keyboard_voice_rounded, color: cs.onSurface),
                 tooltip: AppStrings.dashboardVoiceTooltip,
               ),
+              if (onLogout != null)
+                IconButton(
+                  onPressed: onLogout,
+                  icon: Icon(Icons.logout_rounded, color: cs.onSurface),
+                  tooltip: 'Logout',
+                ),
               const SizedBox(width: 6),
             ],
             flexibleSpace: Padding(

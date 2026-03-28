@@ -7,7 +7,14 @@ import '../monthly/monthly_overview_screen.dart';
 import '../scan/scan_landing_screen.dart';
 
 class ShellScreen extends StatefulWidget {
-  const ShellScreen({super.key});
+  final String userName;
+  final VoidCallback? onLogout;
+
+  const ShellScreen({
+    super.key,
+    required this.userName,
+    this.onLogout,
+  });
 
   @override
   State<ShellScreen> createState() => _ShellScreenState();
@@ -34,10 +41,13 @@ class _ShellScreenState extends State<ShellScreen> {
           const _ShellBackdrop(),
           IndexedStack(
             index: index,
-            children: const [
-              DashboardScreen(),
-              ScanLandingScreen(),
-              MonthlyOverviewScreen(),
+            children: [
+              DashboardScreen(
+                userName: widget.userName,
+                onLogout: widget.onLogout,
+              ),
+              const ScanLandingScreen(),
+              const MonthlyOverviewScreen(),
             ],
           ),
         ],
